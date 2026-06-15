@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MoneyLens">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme:dark)">
+<title>MoneyLens</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* ─── Design tokens ──────────────────────────────── */
+:root{
+  --bg:#F2F2F7; --surface:#FFFFFF; --surface2:#F2F2F7;
+  --sep:rgba(60,60,67,.12); --sep2:rgba(60,60,67,.29);
+  --t1:#000; --t2:rgba(60,60,67,.6); --t3:rgba(60,60,67,.3); --t4:rgba(60,60,67,.18);
+  --fill:rgba(120,120,128,.12); --fill2:rgba(120,120,128,.08);
+  --accent:#2A7A1A; --accent2:#34A027; --accent-bg:rgba(42,122,26,.10);
+  --red:#FF3B30; --red-bg:rgba(255,59,48,.10);
+  --blue:#007AFF; --blue-bg:rgba(0,122,255,.10);
+  --orange:#FF9500; --orange-bg:rgba(255,149,0,.10);
+  --teal:#32ADE6; --purple:#AF52DE; --pink:#FF2D55; --indigo:#5856D6;
+  --r:13px; --r-sm:10px; --r-btn:12px;
+  --font:-apple-system,'SF Pro Text','SF Pro Display',BlinkMacSystemFont,'Helvetica Neue',sans-serif;
+  --mono:'SF Mono','Fira Code',ui-monospace,monospace;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#000; --surface:#1C1C1E; --surface2:#2C2C2E;
+    --sep:rgba(84,84,88,.65); --sep2:rgba(84,84,88,.85);
+    --t1:#FFF; --t2:rgba(235,235,245,.6); --t3:rgba(235,235,245,.3); --t4:rgba(235,235,245,.18);
+    --fill:rgba(120,120,128,.36); --fill2:rgba(120,120,128,.24);
+    --accent:#30D158; --accent2:#34C759; --accent-bg:rgba(48,209,88,.15);
+    --red:#FF453A; --red-bg:rgba(255,69,58,.15);
+    --blue:#0A84FF; --blue-bg:rgba(10,132,255,.15);
+    --orange:#FF9F0A; --orange-bg:rgba(255,159,10,.15);
+  }
+}
+/* ─── Reset ──────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;-webkit-text-size-adjust:100%}
+body{font-family:var(--font);background:var(--bg);color:var(--t1);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font-family:var(--font);cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:var(--font);color:var(--t1)}
+/* ─── Shell ──────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:430px;margin:0 auto}
+/* ─── Navbar ─────────────────────────────────────── */
+.nav-bar{
+  background:rgba(242,242,247,.85);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:.5px solid var(--sep);
+  padding-top:env(safe-area-inset-top,0);flex-shrink:0;z-index:50
+}
+@media(prefers-color-scheme:dark){.nav-bar{background:rgba(28,28,30,.85)}}
+.nav-bar-inner{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;gap:8px}
+.nav-title{font-size:17px;font-weight:600;letter-spacing:-.4px}
+.nav-title em{color:var(--accent);font-style:normal}
+.nav-pill{font-size:12px;font-weight:500;background:var(--accent-bg);color:var(--accent);padding:3px 10px;border-radius:20px;white-space:nowrap}
+.nav-sync{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3)}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--t4);flex-shrink:0;transition:background .3s}
+.sync-dot.ok{background:var(--accent)}.sync-dot.err{background:var(--red)}.sync-dot.spin{background:var(--orange);animation:pulse .9s infinite}
+@keyframes pulse{50%{opacity:.35}}
+/* ─── Scroll ─────────────────────────────────────── */
+#scroller{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+/* ─── Tab bar ────────────────────────────────────── */
+.tab-bar{
+  background:rgba(242,242,247,.85);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+  border-top:.5px solid var(--sep);
+  padding-bottom:env(safe-area-inset-bottom,0);flex-shrink:0;z-index:50
+}
+@media(prefers-color-scheme:dark){.tab-bar{background:rgba(28,28,30,.85)}}
+.tab-bar-inner{display:flex;height:49px}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;font-weight:500;letter-spacing:.1px;color:var(--t3);transition:color .15s}
+.tab.on{color:var(--accent)}
+.tab-ic{display:flex;align-items:center;justify-content:center;width:28px;height:28px}
+.tab-ic svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* ─── Pages ──────────────────────────────────────── */
+.pg{display:none;padding:12px 0 28px;animation:rise .2s ease}
+.pg.on{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+/* ─── Sections ───────────────────────────────────── */
+.sec{margin:0 16px 10px}
+.sec-hdr{font-size:13px;font-weight:400;color:var(--t2);text-transform:uppercase;letter-spacing:.5px;padding:0 4px 6px}
+.sec-ftr{font-size:13px;color:var(--t2);padding:6px 4px 0;line-height:1.45}
+.sec-ftr a{color:var(--accent)}
+/* ─── Cards ──────────────────────────────────────── */
+.card{background:var(--surface);border-radius:var(--r);overflow:hidden}
+.row{display:flex;align-items:center;padding:11px 16px;border-bottom:.5px solid var(--sep);min-height:44px;gap:12px}
+.row:last-child{border-bottom:none}
+.row-ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.row-ic svg{width:17px;height:17px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.row-body{flex:1;min-width:0}
+.row-lbl{font-size:17px;letter-spacing:-.2px}
+.row-sub{font-size:14px;color:var(--t2);margin-top:2px}
+.row-val{font-size:17px;color:var(--t2);letter-spacing:-.2px;flex-shrink:0}
+.row-chev{color:var(--t3);flex-shrink:0}
+.row-chev svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+/* ─── Hero ring ──────────────────────────────────── */
+/* Signature element: animated spending ring that live-updates */
+.hero{background:var(--surface);border-radius:var(--r);margin:12px 16px 10px;padding:22px 20px 18px;display:flex;flex-direction:column;align-items:center}
+.ring-wrap{position:relative;width:170px;height:170px;margin-bottom:18px}
+.ring-svg{width:170px;height:170px;transform:rotate(-90deg)}
+.ring-track{fill:none;stroke:var(--fill);stroke-width:20}
+.ring-seg{fill:none;stroke-width:20;stroke-dasharray:0 490;transition:stroke-dasharray .65s cubic-bezier(.34,1.56,.64,1),stroke-dashoffset .65s cubic-bezier(.34,1.56,.64,1)}
+.ring-centre{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}
+.ring-amt{font-size:27px;font-weight:700;letter-spacing:-1px;transition:color .3s}
+.ring-lbl{font-size:12px;color:var(--t2);margin-top:1px}
+.hero-row{display:grid;grid-template-columns:repeat(3,1fr);width:100%;gap:0}
+.hero-stat{text-align:center;padding:0 4px}
+.hero-stat+.hero-stat{border-left:.5px solid var(--sep)}
+.hs-val{font-size:18px;font-weight:700;letter-spacing:-.5px}
+.hs-lbl{font-size:11px;color:var(--t2);margin-top:2px}
+/* ─── Category bar ───────────────────────────────── */
+.cat-bar-bg{height:3px;background:var(--fill);border-radius:2px;margin-top:5px;overflow:hidden}
+.cat-bar-fill{height:100%;border-radius:2px;transition:width .6s cubic-bezier(.34,1.56,.64,1)}
+/* ─── Tip cards ──────────────────────────────────── */
+.tip-row{padding:12px 16px;border-bottom:.5px solid var(--sep)}
+.tip-row:last-child{border-bottom:none}
+.tip-title{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.tip-body{font-size:14px;color:var(--t2);margin-top:3px;line-height:1.45}
+.tip-save{font-size:13px;font-weight:600;color:var(--accent);margin-top:5px}
+/* ─── Goal bar ───────────────────────────────────── */
+.goal-bg{height:8px;background:var(--fill);border-radius:4px;overflow:hidden;margin:8px 0}
+.goal-fill{height:100%;border-radius:4px;transition:width .5s cubic-bezier(.34,1.56,.64,1),background .3s}
+/* ─── Inputs ─────────────────────────────────────── */
+.f-input,.f-sel,.f-area{
+  background:transparent;border:none;outline:none;
+  font-family:var(--font);font-size:17px;letter-spacing:-.2px;color:var(--t1);
+  -webkit-appearance:none;appearance:none;width:100%
+}
+.f-area{resize:none;height:120px;line-height:1.55;font-family:var(--mono);font-size:13px}
+.f-sel{color:var(--accent);text-align:right}
+.f-input.right{text-align:right;color:var(--accent);font-weight:600}
+/* ─── Segmented control ──────────────────────────── */
+.seg{display:flex;background:var(--fill);border-radius:9px;padding:2px;margin:0 16px 10px}
+.seg-btn{flex:1;padding:6px;border-radius:7px;font-size:13px;font-weight:500;text-align:center;color:var(--t2);transition:all .18s}
+.seg-btn.on{background:var(--surface);color:var(--t1);box-shadow:0 1px 3px rgba(0,0,0,.12),0 .5px 1px rgba(0,0,0,.08)}
+/* ─── Buttons ────────────────────────────────────── */
+.btn{display:block;width:100%;padding:14px;border-radius:var(--r-btn);font-size:17px;font-weight:600;letter-spacing:-.3px;text-align:center;transition:opacity .12s,transform .1s;cursor:pointer;border:none}
+.btn:active{opacity:.82;transform:scale(.98)}
+.btn:disabled{opacity:.38}
+.btn-g{background:var(--accent);color:#fff}
+.btn-ghost{background:var(--fill);color:var(--t2)}
+.btn-red{background:var(--red-bg);color:var(--red)}
+/* ─── Drop zone ──────────────────────────────────── */
+.drop{margin:0 16px 10px;background:var(--surface);border-radius:var(--r);border:1.5px dashed var(--sep2);padding:34px 20px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s}
+.drop:active,.drop.over{background:var(--fill2);border-color:var(--accent)}
+.drop-ic{width:54px;height:54px;background:var(--accent-bg);border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.drop-ic svg{width:28px;height:28px;fill:none;stroke:var(--accent);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.drop-t{font-size:16px;font-weight:600;letter-spacing:-.2px;margin-bottom:4px}
+.drop-s{font-size:14px;color:var(--t2)}
+/* ─── Loading ────────────────────────────────────── */
+.spinner-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 24px;gap:14px;text-align:center}
+.spinner svg{animation:spin .9s linear infinite;width:44px;height:44px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin-t{font-size:17px;font-weight:600;letter-spacing:-.3px}
+.spin-s{font-size:14px;color:var(--t2);line-height:1.4}
+/* ─── Pills ──────────────────────────────────────── */
+.pill-row{display:flex;gap:6px;overflow-x:auto;padding:0 16px 10px;scrollbar-width:none}
+.pill-row::-webkit-scrollbar{display:none}
+.pill{flex-shrink:0;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:500;background:var(--surface);color:var(--t2);border:.5px solid var(--sep2);transition:all .15s;cursor:pointer}
+.pill.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* ─── Remove btn ─────────────────────────────────── */
+.rm-btn{width:28px;height:28px;background:var(--fill);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.rm-btn svg{width:13px;height:13px;fill:none;stroke:var(--t2);stroke-width:2.4;stroke-linecap:round}
+/* ─── Spend tag ──────────────────────────────────── */
+.tag{display:inline-flex;align-items:center;background:var(--fill);border-radius:5px;padding:1px 7px;font-size:12px;color:var(--t2);margin-top:2px;margin-right:4px}
+/* ─── Toast ──────────────────────────────────────── */
+#toast{position:fixed;bottom:calc(58px + env(safe-area-inset-bottom,0px) + 10px);left:50%;transform:translateX(-50%) translateY(12px);background:rgba(50,50,50,.94);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);color:#fff;padding:10px 20px;border-radius:22px;font-size:14px;font-weight:500;white-space:nowrap;opacity:0;transition:all .24s cubic-bezier(.34,1.56,.64,1);z-index:999;pointer-events:none;max-width:calc(100vw - 48px);text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* ─── Onboarding ─────────────────────────────────── */
+.ob-hero{padding:36px 24px 12px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.ob-logo{width:84px;height:84px;background:var(--accent);border-radius:22px;display:flex;align-items:center;justify-content:center}
+.ob-logo svg{width:46px;height:46px;fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ob-t{font-size:30px;font-weight:700;letter-spacing:-.9px}
+.ob-s{font-size:15px;color:var(--t2);text-align:center;line-height:1.5;max-width:280px}
+/* ─── Alert banner ───────────────────────────────── */
+.banner{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-radius:var(--r);font-size:14px;line-height:1.45;margin:0 16px 10px}
+.banner svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1px}
+.bn-blue{background:var(--blue-bg);color:var(--blue)}
+.bn-warn{background:var(--orange-bg);color:var(--orange)}
+.bn-red{background:var(--red-bg);color:var(--red)}
+/* ─── Misc ───────────────────────────────────────── */
+.g{color:var(--accent)}.r{color:var(--red)}.b{color:var(--blue)}.muted{color:var(--t2)}
+.f600{font-weight:600}.f700{font-weight:700}
+.empty{display:flex;flex-direction:column;align-items:center;padding:40px 20px;gap:10px;text-align:center;color:var(--t2)}
+.empty svg{width:36px;height:36px;fill:none;stroke:var(--t3);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Navbar ──────────────────────────────────────── -->
+<div class="nav-bar"><div class="nav-bar-inner">
+  <span class="nav-title">Money<em>Lens</em></span>
+  <span id="nb-period" class="nav-pill" style="display:none"></span>
+  <span id="nb-sync" class="nav-sync" style="display:none">
+    <span class="sync-dot" id="sd"></span><span id="sl">Saved</span>
+  </span>
+</div></div>
+
+<!-- ── Scrollable content ──────────────────────────── -->
+<div id="scroller">
+
+<!-- ══════ SETUP ══════ -->
+<div class="pg on" id="pg-setup">
+  <div class="ob-hero">
+    <div class="ob-logo"><svg viewBox="0 0 46 46"><circle cx="23" cy="21" r="13"/><line x1="23" y1="8" x2="23" y2="34"/><line x1="16" y1="14" x2="30" y2="14"/><path d="M12 36q11 9 22 0"/></svg></div>
+    <div class="ob-t">MoneyLens</div>
+    <div class="ob-s">Your AI-powered budget tracker. Reads PDF bank statements and saves everything to your Google Sheet.</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hdr">1 · Anthropic API key</div>
+    <div class="card"><div class="row"><div class="row-body">
+      <input class="f-input" type="password" id="s-key" placeholder="sk-ant-…" autocomplete="off" autocorrect="off" spellcheck="false">
+    </div></div></div>
+    <div class="sec-ftr">Get your key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>. Stored on-device only.</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hdr">2 · Google Sheet name</div>
+    <div class="card"><div class="row"><div class="row-body">
+      <input class="f-input" type="text" id="s-sheet" placeholder="My Budget 2025" autocorrect="off">
+    </div></div></div>
+    <div class="sec-ftr">A Google Sheet with this name will be created automatically to store your budget data.</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hdr">3 · Apps Script web app URL</div>
+    <div class="card"><div class="row"><div class="row-body">
+      <input class="f-input" type="url" id="s-url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" autocorrect="off" spellcheck="false">
+    </div></div></div>
+    <div class="sec-ftr">Deploy the included Apps Script (see README), then paste the Web App URL here.</div>
+  </div>
+
+  <div class="sec"><button class="btn btn-g" onclick="doSetup()">Get started →</button></div>
+</div>
+
+<!-- ══════ UPLOAD ══════ -->
+<div class="pg" id="pg-upload">
+  <div style="margin-top:12px" class="banner bn-blue">
+    <svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="8"/><line x1="9" y1="6" x2="9" y2="9"/><line x1="9" y1="12" x2="9.01" y2="12"/></svg>
+    <span>Your statement is sent to Claude over HTTPS for analysis. Nothing is stored server-side.</span>
+  </div>
+
+  <div class="seg" style="margin-top:4px">
+    <button class="seg-btn on" onclick="switchMethod('pdf',this)" id="m-pdf-btn">PDF file</button>
+    <button class="seg-btn" onclick="switchMethod('paste',this)" id="m-paste-btn">Paste text</button>
+  </div>
+
+  <!-- PDF method -->
+  <div id="m-pdf">
+    <div class="drop" id="dropzone" onclick="document.getElementById('fi').click()" ondragover="dOver(event)" ondragleave="dLeave(event)" ondrop="dDrop(event)">
+      <div class="drop-ic"><svg viewBox="0 0 28 28"><path d="M4 20v3a1 1 0 001 1h18a1 1 0 001-1v-3"/><polyline points="8,10 14,4 20,10"/><line x1="14" y1="4" x2="14" y2="20"/></svg></div>
+      <div class="drop-t">Upload PDF statement</div>
+      <div class="drop-s">Tap to select · or drag and drop</div>
+    </div>
+    <input type="file" id="fi" accept=".pdf" style="display:none" onchange="onFileChange(event)">
+    <div id="file-ready" style="display:none" class="sec">
+      <div class="card"><div class="row">
+        <div class="row-ic" style="background:var(--red)">
+          <svg viewBox="0 0 17 17"><rect x="2" y="1" width="13" height="15" rx="2"/><line x1="5" y1="5" x2="12" y2="5"/><line x1="5" y1="8" x2="12" y2="8"/><line x1="5" y1="11" x2="9" y2="11"/></svg>
+        </div>
+        <div class="row-body"><div class="row-lbl" id="fn">—</div><div class="row-sub" id="fs">—</div></div>
+        <div style="color:var(--accent)"><svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,9 7,13 14,4"/></svg></div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- Paste method -->
+  <div id="m-paste" style="display:none">
+    <div class="sec"><div class="card"><div class="row" style="align-items:flex-start;padding:12px 16px">
+      <textarea class="f-input f-area" id="paste-in" placeholder="Paste statement rows here&#10;&#10;01/05/2025  Woolworths       -62.40&#10;02/05/2025  Shell Petrol     -85.00&#10;07/05/2025  Salary        +5200.00"></textarea>
+    </div></div></div>
+  </div>
+
+  <div id="upload-loading" style="display:none">
+    <div class="spinner-wrap">
+      <div class="spinner"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="none" stroke="var(--accent)" stroke-width="4" stroke-dasharray="85 27" stroke-linecap="round"/></svg></div>
+      <div class="spin-t" id="load-title">Reading PDF…</div>
+      <div class="spin-s" id="load-sub">Extracting transactions from your statement</div>
+    </div>
+  </div>
+
+  <div id="upload-btn-wrap" class="sec">
+    <button class="btn btn-g" onclick="doAnalyse()">Analyse statement →</button>
+  </div>
+</div>
+
+<!-- ══════ OVERVIEW ══════ -->
+<div class="pg" id="pg-overview">
+  <!-- Hero ring -->
+  <div class="hero">
+    <div class="ring-wrap">
+      <svg class="ring-svg" viewBox="0 0 170 170">
+        <circle class="ring-track" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs0" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs1" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs2" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs3" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs4" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs5" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs6" cx="85" cy="85" r="75"/>
+        <circle class="ring-seg" id="rs7" cx="85" cy="85" r="75"/>
+      </svg>
+      <div class="ring-centre">
+        <div class="ring-amt" id="ring-spare">$0</div>
+        <div class="ring-lbl">spare / mo</div>
+      </div>
+    </div>
+    <div class="hero-row">
+      <div class="hero-stat"><div class="hs-val g" id="hs-inc">$0</div><div class="hs-lbl">Income</div></div>
+      <div class="hero-stat"><div class="hs-val r" id="hs-spend">$0</div><div class="hs-lbl">Spending</div></div>
+      <div class="hero-stat"><div class="hs-val b" id="hs-spare">$0</div><div class="hs-lbl">Spare</div></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hdr">Spending breakdown</div>
+    <div class="card" id="cat-list"></div>
+  </div>
+  <div class="sec"><button class="btn btn-ghost" onclick="confirmReset()">Load new statement</button></div>
+</div>
+
+<!-- ══════ TRANSACTIONS ══════ -->
+<div class="pg" id="pg-tx">
+  <div style="margin-top:10px" class="pill-row" id="tx-pills"></div>
+  <div class="sec"><div class="card" id="tx-list"></div></div>
+</div>
+
+<!-- ══════ SAVINGS ══════ -->
+<div class="pg" id="pg-savings">
+  <div class="sec" style="margin-top:12px">
+    <div class="sec-hdr">AI savings tips</div>
+    <div class="card" id="tips-list"></div>
+  </div>
+  <div class="sec">
+    <div class="sec-hdr">Monthly savings goal</div>
+    <div class="card">
+      <div class="row">
+        <div class="row-lbl">Target</div>
+        <span class="muted" style="font-size:17px;margin-right:2px">$</span>
+        <input class="f-input right" type="number" id="goal-input" placeholder="500" inputmode="decimal" style="width:90px;flex:none" oninput="onGoalChange()">
+      </div>
+    </div>
+    <div id="goal-bar-area" style="display:none;padding:4px 4px 0">
+      <div class="goal-bg"><div class="goal-fill" id="goal-fill"></div></div>
+      <div id="goal-fb" style="font-size:14px;color:var(--t2);line-height:1.4;padding:2px 0"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ ADD SPEND ══════ -->
+<div class="pg" id="pg-add">
+  <div class="sec" style="margin-top:12px">
+    <div class="sec-hdr">New expense</div>
+    <div class="card">
+      <div class="row"><div class="row-lbl">Description</div><input class="f-input right" type="text" id="a-desc" placeholder="e.g. Car registration" autocorrect="off" style="text-align:right"></div>
+      <div class="row"><div class="row-lbl">Amount</div><span class="muted" style="font-size:17px;margin-right:2px">$</span><input class="f-input right" type="number" id="a-amt" placeholder="0" inputmode="decimal" style="width:100px;flex:none"></div>
+      <div class="row"><div class="row-lbl">Category</div><select class="f-sel" id="a-cat"></select></div>
+      <div class="row"><div class="row-lbl">Frequency</div>
+        <select class="f-sel" id="a-freq">
+          <option value="once">One-off</option>
+          <option value="weekly">Weekly</option>
+          <option value="fortnightly">Fortnightly</option>
+          <option value="monthly" selected>Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="sec"><button class="btn btn-g" onclick="doAddSpend()">Add to budget</button></div>
+
+  <div id="added-area" style="display:none">
+    <div class="sec">
+      <div class="sec-hdr">Added expenses</div>
+      <div class="card" id="added-list"></div>
+    </div>
+    <div class="sec"><div class="card">
+      <div class="row"><div class="row-lbl muted" style="font-size:15px">Extra monthly</div><div class="row-val r f600" id="extra-mo">$0</div></div>
+      <div class="row"><div class="row-lbl f600">Updated spare</div><div class="row-val b f700" id="updated-spare">$0</div></div>
+    </div></div>
+  </div>
+</div>
+
+<!-- ══════ SETTINGS ══════ -->
+<div class="pg" id="pg-settings">
+  <div class="sec" style="margin-top:12px">
+    <div class="sec-hdr">Configuration</div>
+    <div class="card">
+      <div class="row"><div class="row-ic" style="background:var(--accent)"><svg viewBox="0 0 17 17"><path d="M8.5 1a6 6 0 100 12A6 6 0 008.5 1z"/><path d="M8.5 7v4"/><path d="M8.5 5h.01"/></svg></div>
+        <div class="row-body"><div class="row-lbl">API key</div><div class="row-sub" id="set-key-disp">Not set</div></div>
+        <button class="row-chev" onclick="toggleKeyEdit()"><svg viewBox="0 0 13 13"><polyline points="4,2 9,6.5 4,11"/></svg></button>
+      </div>
+      <div id="key-edit-row" style="display:none" class="row"><input class="f-input" type="password" id="set-key-in" placeholder="sk-ant-…" autocomplete="off" autocorrect="off"></div>
+      <div class="row"><div class="row-ic" style="background:#0F9D58"><svg viewBox="0 0 17 17"><rect x="2" y="2" width="13" height="13" rx="1"/><line x1="2" y1="6" x2="15" y2="6"/><line x1="2" y1="10" x2="15" y2="10"/><line x1="6" y1="6" x2="6" y2="15"/></svg></div>
+        <div class="row-body"><div class="row-lbl">Sheet name</div><div class="row-sub" id="set-sheet-disp">Not set</div></div>
+      </div>
+      <div class="row"><div class="row-ic" style="background:var(--blue)"><svg viewBox="0 0 17 17"><path d="M14 8.5A5.5 5.5 0 118.5 3"/><polyline points="14,3 14,8 9,8"/></svg></div>
+        <div class="row-body"><div class="row-lbl">Sync now</div><div class="row-sub" id="set-sync-disp">—</div></div>
+        <button class="row-chev" onclick="forceSave()"><svg viewBox="0 0 13 13"><polyline points="4,2 9,6.5 4,11"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <div class="sec"><div class="card">
+    <div class="row" onclick="confirmReset()" style="cursor:pointer">
+      <div class="row-ic" style="background:var(--red)"><svg viewBox="0 0 17 17"><polyline points="1,4 16,4"/><path d="M7 4V2h3v2"/><path d="M3 4l1 11h9l1-11"/></svg></div>
+      <div class="row-body"><div class="row-lbl r">Clear session</div><div class="row-sub">Remove loaded statement (Sheet unaffected)</div></div>
+      <div class="row-chev"><svg viewBox="0 0 13 13"><polyline points="4,2 9,6.5 4,11"/></svg></div>
+    </div>
+  </div></div>
+  <div class="sec"><div class="card">
+    <div class="row"><div class="row-body"><div class="row-lbl">MoneyLens</div><div class="row-sub">v2.1 · Powered by Claude · PDF + Sheets</div></div></div>
+    <div class="row"><div class="row-body"><div class="row-lbl">Privacy</div><div class="row-sub">All analysis over HTTPS. Nothing stored server-side.</div></div></div>
+  </div></div>
+  <div class="sec"><button class="btn btn-g" onclick="saveSettings()">Save settings</button></div>
+</div>
+
+</div><!-- /scroller -->
+
+<!-- ── Tab bar ──────────────────────────────────────── -->
+<div class="tab-bar" id="tab-bar" style="display:none"><div class="tab-bar-inner">
+  <button class="tab on" onclick="showTab('overview')" id="tb-overview">
+    <div class="tab-ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>Overview
+  </button>
+  <button class="tab" onclick="showTab('tx')" id="tb-tx">
+    <div class="tab-ic"><svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r=".8" fill="currentColor"/><circle cx="3" cy="12" r=".8" fill="currentColor"/><circle cx="3" cy="18" r=".8" fill="currentColor"/></svg></div>Transactions
+  </button>
+  <button class="tab" onclick="showTab('savings')" id="tb-savings">
+    <div class="tab-ic"><svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>Savings
+  </button>
+  <button class="tab" onclick="showTab('add')" id="tb-add">
+    <div class="tab-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div>Add spend
+  </button>
+  <button class="tab" onclick="showTab('settings')" id="tb-settings">
+    <div class="tab-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div>Settings
+  </button>
+</div></div>
+
+</div><!-- /app -->
+<div id="toast"></div>
+
+<!-- ── PDF.js ─────────────────────────────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+// Configure PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ═══════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════
+let BD = null;         // budgetData
+let AX = [];           // addedSpends
+let TF = 'All';        // txFilter
+let fileB64 = null;    // PDF base64 for API
+let filePages = [];    // rendered page images
+let curMethod = 'pdf';
+let syncTmr = null;
+
+const C_PALETTE = ['#FF3B30','#007AFF','#FF9500','#AF52DE','#32ADE6','#FF2D55','#5856D6','#34C759'];
+const C_ICONS = {
+  'Groceries':           '<path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/>',
+  'Transport':           '<rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16,8 20,8 23,11 23,16 16,16"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
+  'Dining & Takeaway':   '<path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/>',
+  'Entertainment':       '<polygon points="23,7 16,12 23,17"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  'Utilities':           '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',
+  'Shopping':            '<path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/>',
+  'Health':              '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  'Insurance':           '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  'Subscriptions':       '<polyline points="23,4 23,10 17,10"/><polyline points="1,20 1,14 7,14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>',
+  'Savings & Transfers': '<path d="M19 5H5a2 2 0 00-2 2v10a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2z"/><path d="M16 14s-1-2-4-2-4 2-4 2"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/>',
+  'Other':               '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'
+};
+const FREQ_MO    = { once:0, weekly:52/12, fortnightly:26/12, monthly:1, yearly:1/12 };
+const FREQ_LABEL = { once:'One-off', weekly:'Weekly', fortnightly:'Fortnightly', monthly:'Monthly', yearly:'Yearly' };
+
+// ═══════════════════════════════════════════════
+// Storage helpers
+// ═══════════════════════════════════════════════
+const LS = {
+  g: k => { try{ return JSON.parse(localStorage.getItem(k)); }catch{ return null; } },
+  s: (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} },
+  gs: k => localStorage.getItem(k)||'',
+  ss: (k,v) => { try{ localStorage.setItem(k,v); }catch{} }
+};
+const key    = () => LS.gs('ml_key');
+const sheet  = () => LS.gs('ml_sheet');
+const script = () => LS.gs('ml_script');
+
+// ═══════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  if (!key() || !script() || !sheet()) { showPage('setup'); return; }
+  updateSettingsDisp();
+  loadFromSheet().then(ok => {
+    if (ok && BD) { launchApp(); }
+    else { showPage('upload'); document.getElementById('tab-bar').style.display='flex'; showSyncUI(true); }
+  });
+});
+
+function launchApp() {
+  document.getElementById('tab-bar').style.display = 'flex';
+  showSyncUI(true);
+  renderAll();
+  showTab('overview');
+}
+
+// ═══════════════════════════════════════════════
+// Setup
+// ═══════════════════════════════════════════════
+function doSetup() {
+  const k = document.getElementById('s-key').value.trim();
+  const sh = document.getElementById('s-sheet').value.trim();
+  const sc = document.getElementById('s-url').value.trim();
+  if (!k)  { toast('Add your API key'); return; }
+  if (!sh) { toast('Name your Google Sheet'); return; }
+  if (!sc) { toast('Add your Apps Script URL'); return; }
+  LS.ss('ml_key',k); LS.ss('ml_sheet',sh); LS.ss('ml_script',sc);
+  updateSettingsDisp();
+  loadFromSheet().then(ok => {
+    if (ok && BD) launchApp();
+    else { showPage('upload'); document.getElementById('tab-bar').style.display='flex'; showSyncUI(true); }
+  });
+}
+
+// ═══════════════════════════════════════════════
+// PDF handling
+// ═══════════════════════════════════════════════
+function dOver(e)  { e.preventDefault(); document.getElementById('dropzone').classList.add('over'); }
+function dLeave(e) { document.getElementById('dropzone').classList.remove('over'); }
+function dDrop(e)  { e.preventDefault(); dLeave(e); if(e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
+function onFileChange(e) { if(e.target.files[0]) processFile(e.target.files[0]); }
+
+async function processFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
+  document.getElementById('fn').textContent = file.name;
+  document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF';
+  document.getElementById('file-ready').style.display = '';
+  document.getElementById('dropzone').style.display = 'none';
+
+  // Read as base64 for the API
+  const reader = new FileReader();
+  reader.onload = e => {
+    fileB64 = e.target.result.split(',')[1];
+  };
+  reader.readAsDataURL(file);
+
+  // Also render pages to canvas for image-based extraction
+  try {
+    const ab = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+    filePages = [];
+    const maxPages = Math.min(pdf.numPages, 8); // cap at 8 pages
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const vp = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      filePages.push(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    }
+    toast(`PDF loaded — ${pdf.numPages} page${pdf.numPages>1?'s':''}`);
+  } catch(err) {
+    toast('PDF read error — will use text extraction');
+  }
+}
+
+function switchMethod(m, el) {
+  curMethod = m;
+  document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('on'));
+  el.classList.add('on');
+  document.getElementById('m-pdf').style.display  = m==='pdf'  ? '' : 'none';
+  document.getElementById('m-paste').style.display = m==='paste' ? '' : 'none';
+}
+
+// ═══════════════════════════════════════════════
+// Analyse
+// ═══════════════════════════════════════════════
+async function doAnalyse() {
+  const k = key();
+  if (!k) { showTab('settings'); toast('Add your API key in Settings'); return; }
+
+  // Show loading
+  document.getElementById('upload-loading').style.display = '';
+  document.getElementById('upload-btn-wrap').style.display = 'none';
+  document.getElementById('m-pdf').style.display  = 'none';
+  document.getElementById('m-paste').style.display = 'none';
+  document.querySelector('.seg').style.display = 'none';
+  document.querySelector('.banner').style.display = 'none';
+
+  const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY a valid JSON object with no markdown fences, no preamble, no explanation whatsoever.
+
+Return EXACTLY this JSON structure:
+{
+  "period": "May 2025",
+  "months": 1,
+  "totalIncome": 5200,
+  "totalSpend": 3100,
+  "transactions": [
+    {"date":"01/05/2025","description":"Woolworths Fitzroy","amount":-62.40,"category":"Groceries"}
+  ],
+  "categories": [
+    {"name":"Groceries","amount":450,"count":8}
+  ],
+  "savingsTips": [
+    {"title":"Cut back on dining","body":"You spent $380 on restaurants this month — reducing by half saves ~$190/month.","saving":190}
+  ]
+}
+
+Rules:
+- negative amounts = spending, positive = income/credits
+- If the statement spans multiple months: set months accordingly and normalise ALL amounts to monthly averages (divide by months)
+- totalIncome and totalSpend must always be monthly figures
+- Categories MUST only be from this list: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
+- Do NOT create an Income category — income is a separate field
+- Generate 4–5 specific, actionable savings tips referencing real dollar amounts from the data
+- Return ONLY raw JSON — absolutely nothing else`;
+
+  try {
+    let messages;
+
+    if (curMethod === 'pdf' && filePages.length > 0) {
+      // Use vision: send rendered PDF pages as images
+      document.getElementById('load-title').textContent = 'Reading PDF…';
+      document.getElementById('load-sub').textContent = `Analysing ${filePages.length} page${filePages.length>1?'s':''} from your statement`;
+
+      const imageContent = filePages.map(b64 => ({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: b64 }
+      }));
+      imageContent.push({ type: 'text', text: PROMPT });
+      messages = [{ role: 'user', content: imageContent }];
+
+    } else if (curMethod === 'pdf' && fileB64) {
+      // Fallback: send as PDF document
+      document.getElementById('load-title').textContent = 'Extracting data…';
+      document.getElementById('load-sub').textContent = 'Reading transactions from your PDF';
+      messages = [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileB64 } },
+          { type: 'text', text: PROMPT }
+        ]
+      }];
+
+    } else {
+      // Paste method
+      const txt = document.getElementById('paste-in').value.trim();
+      if (!txt || txt.length < 15) { throw new Error('Paste your bank statement text first'); }
+      document.getElementById('load-title').textContent = 'Analysing statement…';
+      document.getElementById('load-sub').textContent = 'Categorising transactions and building your budget';
+      messages = [{ role: 'user', content: txt + '\n\n' + PROMPT }];
+    }
+
+    document.getElementById('load-title').textContent = 'Categorising transactions…';
+    document.getElementById('load-sub').textContent = 'Building your monthly budget breakdown';
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': k,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-calls': 'true'
+      },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages })
+    });
+
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || 'API error ' + res.status); }
+    const d = await res.json();
+    const txt2 = d.content.map(b => b.text||'').join('');
+    BD = JSON.parse(txt2.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
+    renderAll();
+    scheduleSave();
+    showTab('overview');
+    toast('Statement analysed ✓');
+
+  } catch(err) {
+    document.getElementById('upload-loading').style.display = 'none';
+    document.getElementById('upload-btn-wrap').style.display = '';
+    document.getElementById('m-pdf').style.display = curMethod==='pdf' ? '' : 'none';
+    document.getElementById('m-paste').style.display = curMethod==='paste' ? '' : 'none';
+    document.querySelector('.seg').style.display = 'flex';
+    document.querySelector('.banner').style.display = 'flex';
+    toast('Analysis failed: ' + err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Render
+// ═══════════════════════════════════════════════
+function renderAll() {
+  if (!BD) return;
+  const extraMo = AX.reduce((s,x) => s+x.monthly, 0);
+  const spare   = BD.totalIncome - BD.totalSpend - extraMo;
+
+  // Navbar period
+  if (BD.period) {
+    const pb = document.getElementById('nb-period');
+    pb.textContent = BD.period; pb.style.display = 'inline-block';
+  }
+
+  // Hero stats
+  document.getElementById('hs-inc').textContent   = fmt(BD.totalIncome);
+  document.getElementById('hs-spend').textContent = fmt(BD.totalSpend + extraMo);
+  const spEl = document.getElementById('hs-spare');
+  spEl.textContent = fmt(Math.abs(spare));
+  spEl.className   = 'hs-val ' + (spare>=0?'b':'r');
+
+  // Hero ring centre
+  const rAmt = document.getElementById('ring-spare');
+  rAmt.textContent = fmt(Math.abs(spare));
+  rAmt.className   = 'ring-amt ' + (spare>=0?'g':'r');
+
+  // Donut segments
+  const sorted = [...(BD.categories||[])].sort((a,b) => b.amount-a.amount).slice(0,8);
+  const totalSpend = BD.totalSpend + extraMo;
+  const circ = 2 * Math.PI * 75; // ≈ 471.2
+  let offset = 0;
+  for (let i = 0; i < 8; i++) {
+    const seg = document.getElementById('rs'+i);
+    if (!seg) continue;
+    if (i < sorted.length) {
+      const frac = sorted[i].amount / totalSpend;
+      const dash = Math.max(0, frac * circ - 3);
+      seg.style.strokeDasharray  = dash + ' ' + (circ - dash);
+      seg.style.strokeDashoffset = -offset;
+      seg.style.stroke = C_PALETTE[i % C_PALETTE.length];
+      offset += dash + 3;
+    } else {
+      seg.style.strokeDasharray = '0 ' + circ;
+    }
+  }
+
+  // Category list
+  const maxAmt = sorted[0]?.amount || 1;
+  document.getElementById('cat-list').innerHTML = sorted.map((c,i) => {
+    const pct = Math.round((c.amount/BD.totalSpend)*100);
+    const col = C_PALETTE[i % C_PALETTE.length];
+    const ico = C_ICONS[c.name] || C_ICONS['Other'];
+    return `<div class="row" style="align-items:flex-start;padding:12px 16px">
+      <div class="row-ic" style="background:${col}22;flex-shrink:0">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="${col}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ico}</svg>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:15px;font-weight:500">${esc(c.name)}</span>
+          <span style="display:flex;align-items:baseline;gap:5px">
+            <span style="font-size:15px;font-weight:600">${fmt(c.amount)}</span>
+            <span style="font-size:12px;color:var(--t3)">${pct}%</span>
+          </span>
+        </div>
+        <div class="cat-bar-bg"><div class="cat-bar-fill" style="width:${Math.round((c.amount/maxAmt)*100)}%;background:${col}"></div></div>
+        ${c.count ? `<div style="font-size:12px;color:var(--t3);margin-top:3px">${c.count} transaction${c.count!==1?'s':''}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Transactions + pills
+  renderTx();
+  const cats = ['All', ...(BD.categories||[]).map(c=>c.name)];
+  document.getElementById('tx-pills').innerHTML = cats.map(c =>
+    `<button class="pill${c==='All'?' on':''}" onclick="setTF('${esc(c)}',this)">${esc(c)}</button>`
+  ).join('');
+
+  // Tips
+  document.getElementById('tips-list').innerHTML = (BD.savingsTips||[]).map((t,i) => {
+    const isLast = i === (BD.savingsTips.length-1);
+    return `<div class="tip-row${isLast?' ':{}}">
+      <div class="tip-title">${esc(t.title)}</div>
+      <div class="tip-body">${esc(t.body)}</div>
+      ${t.saving ? `<div class="tip-save">Save ${fmt(t.saving)}/month</div>` : ''}
+    </div>`;
+  }).join('');
+
+  // Add spend categories
+  const allCats = [...new Set(['Groceries','Transport','Dining & Takeaway','Entertainment','Utilities','Shopping','Health','Insurance','Subscriptions','Other',...(BD.categories||[]).map(c=>c.name)])];
+  document.getElementById('a-cat').innerHTML = allCats.map(c=>`<option>${c}</option>`).join('');
+
+  renderAddedSpends();
+  renderGoal();
+}
+
+function renderTx() {
+  if (!BD) return;
+  const txs = (BD.transactions||[]).filter(tx => TF==='All' || tx.category===TF);
+  if (!txs.length) {
+    document.getElementById('tx-list').innerHTML = '<div class="empty"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="13" y2="13"/></svg><div style="font-size:15px;font-weight:600">No transactions</div></div>';
+    return;
+  }
+  document.getElementById('tx-list').innerHTML = txs.map((tx,i) => {
+    const pos = tx.amount > 0;
+    const last = i===txs.length-1;
+    return `<div class="row" style="${last?'border-bottom:none':''}">
+      <div class="row-body">
+        <div class="row-lbl" style="font-size:15px;font-weight:500">${esc(tx.description)}</div>
+        <div class="row-sub">${esc(tx.date)} · ${esc(tx.category)}</div>
+      </div>
+      <div style="font-size:15px;font-weight:600;color:${pos?'var(--accent)':'var(--t1)'};flex-shrink:0;margin-left:10px">${pos?'+':'−'}${fmt(Math.abs(tx.amount))}</div>
+    </div>`;
+  }).join('');
+}
+
+function setTF(cat, el) {
+  TF = cat;
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
+  el.classList.add('on');
+  renderTx();
+}
+
+// ═══════════════════════════════════════════════
+// Add spend
+// ═══════════════════════════════════════════════
+function doAddSpend() {
+  const desc = document.getElementById('a-desc').value.trim();
+  const amt  = parseFloat(document.getElementById('a-amt').value);
+  const cat  = document.getElementById('a-cat').value;
+  const freq = document.getElementById('a-freq').value;
+  if (!desc || isNaN(amt) || amt<=0) { toast('Enter a description and amount'); return; }
+  AX.push({ id: Date.now(), desc, amt, cat, freq, monthly: amt * FREQ_MO[freq] });
+  document.getElementById('a-desc').value = '';
+  document.getElementById('a-amt').value  = '';
+  renderAddedSpends();
+  renderAll();
+  scheduleSave();
+  toast(desc + ' added ✓');
+}
+
+function removeSpend(id) {
+  AX = AX.filter(x => x.id!==id);
+  renderAddedSpends();
+  renderAll();
+  scheduleSave();
+}
+
+function renderAddedSpends() {
+  if (!BD) return;
+  const totalExtra = AX.reduce((s,x) => s+x.monthly, 0);
+  const spare = BD.totalIncome - BD.totalSpend - totalExtra;
+  document.getElementById('extra-mo').textContent     = fmt(totalExtra);
+  document.getElementById('updated-spare').textContent = fmt(Math.abs(spare));
+  document.getElementById('updated-spare').style.color = spare>=0 ? 'var(--blue)' : 'var(--red)';
+
+  if (!AX.length) { document.getElementById('added-area').style.display='none'; return; }
+  document.getElementById('added-area').style.display = '';
+  document.getElementById('added-list').innerHTML = AX.map((s,i) => {
+    const last = i===AX.length-1;
+    return `<div class="row" style="${last?'border-bottom:none':''}">
+      <div class="row-body">
+        <div class="row-lbl" style="font-size:15px;font-weight:500">${esc(s.desc)}</div>
+        <div style="margin-top:3px"><span class="tag">${FREQ_LABEL[s.freq]}</span><span class="tag">${esc(s.cat)}</span></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:15px;font-weight:600;color:var(--red)">${fmt(s.monthly)}/mo</span>
+        <button class="rm-btn" onclick="removeSpend(${s.id})" aria-label="Remove">
+          <svg viewBox="0 0 13 13"><line x1="2" y1="2" x2="11" y2="11"/><line x1="11" y1="2" x2="2" y2="11"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════
+// Savings goal
+// ═══════════════════════════════════════════════
+function onGoalChange() {
+  renderGoal();
+  scheduleSave();
+}
+
+function renderGoal() {
+  const goal = parseFloat(document.getElementById('goal-input')?.value);
+  if (!BD || isNaN(goal) || goal<=0) { document.getElementById('goal-bar-area').style.display='none'; return; }
+  const extra = AX.reduce((s,x) => s+x.monthly, 0);
+  const avail = BD.totalIncome - BD.totalSpend - extra;
+  const pct   = Math.min(100, Math.max(0, (avail/goal)*100));
+  const fill  = document.getElementById('goal-fill');
+  fill.style.width      = pct + '%';
+  fill.style.background = avail>=goal ? 'var(--accent)' : avail>0 ? 'var(--orange)' : 'var(--red)';
+  const diff = avail - goal;
+  let fb;
+  if (diff>=0) fb = `<span style="color:var(--accent);font-weight:600">On track</span> — ${fmt(diff)} spare after your goal.`;
+  else if (avail>0) fb = `<span style="color:var(--orange);font-weight:600">${Math.round(pct)}% there</span> — ${fmt(Math.abs(diff))} short each month. Check savings tips.`;
+  else fb = `<span style="color:var(--red);font-weight:600">Not achievable</span> at current spending — review your tips.`;
+  document.getElementById('goal-fb').innerHTML = fb;
+  document.getElementById('goal-bar-area').style.display = '';
+}
+
+// ═══════════════════════════════════════════════
+// Google Sheets sync
+// ═══════════════════════════════════════════════
+async function saveToSheet(data) {
+  const url = script();
+  if (!url) return false;
+  setSyncState('spin', 'Saving…');
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action:'save', sheetName: sheet(), data: JSON.stringify(data) })
+    });
+    const txt = await res.text();
+    const ok  = res.ok || txt.toLowerCase().includes('ok') || txt.toLowerCase().includes('success');
+    setSyncState(ok ? 'ok' : 'err', ok ? 'Saved' : 'Sync failed');
+    return ok;
+  } catch {
+    setSyncState('err', 'Offline');
+    return false;
+  }
+}
+
+async function loadFromSheet() {
+  const url = script();
+  if (!url) return false;
+  setSyncState('spin', 'Loading…');
+  try {
+    const res  = await fetch(url + '?action=load&sheetName=' + encodeURIComponent(sheet()));
+    const txt  = await res.text();
+    const json = JSON.parse(txt);
+    if (json && json.data) {
+      const d = JSON.parse(json.data);
+      BD = d.BD || null;
+      AX = d.AX || [];
+      const g = d.goal || '';
+      const gi = document.getElementById('goal-input');
+      if (gi && g) gi.value = g;
+      setSyncState('ok', 'Loaded');
+      return true;
+    }
+    setSyncState('ok', 'Ready');
+    return false;
+  } catch {
+    setSyncState('err', 'No data');
+    return false;
+  }
+}
+
+function scheduleSave() {
+  setSyncState('spin', 'Saving…');
+  clearTimeout(syncTmr);
+  syncTmr = setTimeout(() => {
+    saveToSheet({ BD, AX, goal: document.getElementById('goal-input')?.value || '' });
+  }, 1000);
+}
+
+async function forceSave() {
+  const ok = await saveToSheet({ BD, AX, goal: document.getElementById('goal-input')?.value || '' });
+  toast(ok ? '✓ Synced to Google Sheets' : 'Sync failed — check Script URL in Settings');
+}
+
+function setSyncState(state, label) {
+  const dot = document.getElementById('sd');
+  const lbl = document.getElementById('sl');
+  const sdl = document.getElementById('set-sync-disp');
+  if (dot) { dot.className = 'sync-dot ' + (state==='ok'?'ok':state==='err'?'err':'spin'); }
+  if (lbl) lbl.textContent = label;
+  if (sdl) sdl.textContent = label;
+}
+
+function showSyncUI(show) {
+  document.getElementById('nb-sync').style.display = show ? 'flex' : 'none';
+}
+
+// ═══════════════════════════════════════════════
+// Navigation
+// ═══════════════════════════════════════════════
+function showTab(name) {
+  document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
+  document.getElementById('pg-'+name).classList.add('on');
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('on'));
+  document.getElementById('tb-'+name).classList.add('on');
+  document.getElementById('scroller').scrollTop = 0;
+}
+
+function showPage(name) {
+  document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
+  document.getElementById('pg-'+name).classList.add('on');
+  document.getElementById('scroller').scrollTop = 0;
+}
+
+// ═══════════════════════════════════════════════
+// Settings
+// ═══════════════════════════════════════════════
+function updateSettingsDisp() {
+  const k = key();
+  const kEl = document.getElementById('set-key-disp');
+  const sEl = document.getElementById('set-sheet-disp');
+  if (kEl) kEl.textContent = k ? 'sk-ant-…' + k.slice(-6) : 'Not set';
+  if (sEl) sEl.textContent = sheet() || 'Not set';
+}
+
+function toggleKeyEdit() {
+  const row = document.getElementById('key-edit-row');
+  row.style.display = row.style.display==='none' ? '' : 'none';
+  if (row.style.display==='') document.getElementById('set-key-in').focus();
+}
+
+function saveSettings() {
+  const newKey = document.getElementById('set-key-in').value.trim();
+  if (newKey) { LS.ss('ml_key', newKey); document.getElementById('key-edit-row').style.display='none'; }
+  updateSettingsDisp();
+  toast('Settings saved');
+}
+
+function confirmReset() {
+  if (confirm('Clear session data? Your Google Sheet is unaffected.')) {
+    BD = null; AX = [];
+    document.getElementById('nb-period').style.display = 'none';
+    document.getElementById('upload-loading').style.display = 'none';
+    document.getElementById('upload-btn-wrap').style.display = '';
+    document.getElementById('m-pdf').style.display = '';
+    document.getElementById('m-paste').style.display = 'none';
+    document.getElementById('dropzone').style.display = '';
+    document.getElementById('file-ready').style.display = 'none';
+    document.querySelector('.seg').style.display = 'flex';
+    document.querySelector('.banner').style.display = 'flex';
+    fileB64 = null; filePages = [];
+    curMethod = 'pdf';
+    document.querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('on', i===0));
+    showTab('upload');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════
+function fmt(n) { return '$' + Math.round(Math.abs(n)).toLocaleString('en-AU'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+let _toastTmr;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_toastTmr);
+  _toastTmr = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// Service worker
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
