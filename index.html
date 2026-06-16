@@ -290,6 +290,14 @@ input,select,textarea{font-family:var(--font);color:var(--t1)}
   <div id="upload-btn-wrap" class="sec">
     <button class="btn btn-g" onclick="doAnalyse()">Analyse statement →</button>
   </div>
+
+  <!-- Debug panel — shown on error -->
+  <div id="debug-panel" style="display:none;margin:0 16px 16px">
+    <div style="background:var(--surface);border-radius:var(--r);padding:12px 14px;border:1px solid var(--red-bg)">
+      <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:8px">Debug log</div>
+      <pre id="debug-log" style="font-size:11px;color:var(--t2);white-space:pre-wrap;word-break:break-all;line-height:1.5;font-family:var(--mono);max-height:200px;overflow-y:auto"></pre>
+    </div>
+  </div>
 </div>
 
 <!-- ══════ OVERVIEW ══════ -->
@@ -445,23 +453,17 @@ input,select,textarea{font-family:var(--font);color:var(--t1)}
 </div><!-- /app -->
 <div id="toast"></div>
 
-<!-- ── PDF.js (legacy build = no separate worker needed) ── -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
-// Use fake worker so PDF.js works without a separate worker file (avoids CDN worker CSP issues)
-pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-
 // ═══════════════════════════════════════════════
 // State
 // ═══════════════════════════════════════════════
 let BD = null;         // budgetData
 let AX = [];           // addedSpends
 let TF = 'All';        // txFilter
-let fileB64 = null;    // PDF base64 for API
-let filePages = [];    // rendered page images (image-based PDFs)
-let pdfText  = '';     // extracted text from text-based PDFs
+let fileB64 = null;    // PDF base64 — sent directly to Claude API
 let curMethod = 'pdf';
 let syncTmr = null;
+let debugLog = [];     // debug capture
 
 const C_PALETTE = ['#FF3B30','#007AFF','#FF9500','#AF52DE','#32ADE6','#FF2D55','#5856D6','#34C759'];
 const C_ICONS = {
@@ -531,96 +533,37 @@ function doSetup() {
 }
 
 // ═══════════════════════════════════════════════
-// PDF handling
+// PDF handling — no PDF.js, send raw PDF to Claude
 // ═══════════════════════════════════════════════
 function dOver(e)  { e.preventDefault(); document.getElementById('dropzone').classList.add('over'); }
 function dLeave(e) { document.getElementById('dropzone').classList.remove('over'); }
 function dDrop(e)  { e.preventDefault(); dLeave(e); if(e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
 function onFileChange(e) { if(e.target.files[0]) processFile(e.target.files[0]); }
 
-// Promisified FileReader
-function readFileAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = e => resolve(e.target.result);
-    r.onerror = () => reject(new Error('File read failed'));
-    r.readAsDataURL(file);
-  });
-}
-function readFileAsArrayBuffer(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = e => resolve(e.target.result);
-    r.onerror = () => reject(new Error('File read failed'));
-    r.readAsArrayBuffer(file);
-  });
-}
-
 async function processFile(file) {
   if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
+  fileB64 = null;
+  dbg('Reading file: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)');
 
   document.getElementById('fn').textContent = file.name;
-  document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF — processing…';
+  document.getElementById('fs').textContent = 'Reading…';
   document.getElementById('file-ready').style.display = '';
   document.getElementById('dropzone').style.display = 'none';
 
-  fileB64 = null; filePages = []; pdfText = '';
-
   try {
-    // 1. Read as base64 (for direct PDF API call fallback)
-    const dataUrl = await readFileAsDataURL(file);
-    fileB64 = dataUrl.split(',')[1];
-
-    // 2. Extract text from PDF with PDF.js (most reliable approach)
-    const ab  = await readFileAsArrayBuffer(file);
-    // Use fake worker to avoid CDN worker CSP issues
-    const pdf = await pdfjsLib.getDocument({ data: ab, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
-
-    let allText = '';
-    const maxPages = Math.min(pdf.numPages, 12);
-    for (let i = 1; i <= maxPages; i++) {
-      const page    = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      // Reconstruct rows by grouping items by Y position
-      const items   = content.items;
-      const rows    = {};
-      for (const item of items) {
-        const y = Math.round(item.transform[5]);
-        if (!rows[y]) rows[y] = [];
-        rows[y].push({ x: item.transform[4], str: item.str });
-      }
-      const sortedYs = Object.keys(rows).map(Number).sort((a,b) => b-a);
-      for (const y of sortedYs) {
-        const line = rows[y].sort((a,b) => a.x-b.x).map(i => i.str).join(' ').trim();
-        if (line) allText += line + '\n';
-      }
-      allText += '\n';
-    }
-    pdfText = allText.trim();
-
-    if (pdfText.length < 50) {
-      // Text extraction yielded nothing — PDF is likely scanned/image-based
-      // Fall back to rendering pages as images
-      filePages = [];
-      for (let i = 1; i <= Math.min(pdf.numPages, 6); i++) {
-        const page = await pdf.getPage(i);
-        const vp   = page.getViewport({ scale: 1.8 });
-        const canvas = document.createElement('canvas');
-        canvas.width = vp.width; canvas.height = vp.height;
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-        filePages.push(canvas.toDataURL('image/jpeg', 0.80).split(',')[1]);
-      }
-      document.getElementById('fs').textContent = `${(file.size/1024).toFixed(1)} KB · ${pdf.numPages} pages (image-based)`;
-      toast(`PDF loaded — using visual mode (${pdf.numPages} pages)`);
-    } else {
-      document.getElementById('fs').textContent = `${(file.size/1024).toFixed(1)} KB · ${pdf.numPages} pages · ${pdfText.length.toLocaleString()} chars`;
-      toast(`PDF loaded — ${pdf.numPages} page${pdf.numPages>1?'s':''} · ${pdfText.length.toLocaleString()} characters extracted`);
-    }
+    const b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = e => resolve(e.target.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('FileReader failed'));
+      reader.readAsDataURL(file);
+    });
+    fileB64 = b64;
+    dbg('File read OK — base64 length: ' + b64.length);
+    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ready';
+    toast('PDF ready — tap Analyse statement');
   } catch(err) {
-    console.error('PDF processing error:', err);
-    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF (basic mode)';
-    toast('PDF loaded in basic mode — tap Analyse to continue');
-    // fileB64 still set, will use direct PDF API call
+    dbg('processFile error: ' + err.message);
+    toast('Could not read file: ' + err.message);
   }
 }
 
@@ -633,16 +576,27 @@ function switchMethod(m, el) {
 }
 
 // ═══════════════════════════════════════════════
+// Debug helpers
+// ═══════════════════════════════════════════════
+function dbg(msg) {
+  const ts = new Date().toTimeString().slice(0,8);
+  debugLog.push('[' + ts + '] ' + msg);
+  console.log('[ML]', msg);
+  const el = document.getElementById('debug-log');
+  if (el) el.textContent = debugLog.slice(-20).join('\n');
+}
+
+// ═══════════════════════════════════════════════
 // Analyse
 // ═══════════════════════════════════════════════
 async function doAnalyse() {
   const k = key();
+  dbg('doAnalyse called. method=' + curMethod + ' key=' + (k ? 'SET('+k.length+'chars)' : 'MISSING') + ' fileB64=' + (fileB64 ? fileB64.length+'chars' : 'null'));
+
   if (!k) { showTab('settings'); toast('Add your API key in Settings'); return; }
 
-  // Validate we have something to send
-  if (curMethod === 'pdf' && !fileB64 && !filePages.length && !pdfText) {
-    toast('Please select a PDF file first'); return;
-  }
+  // Validate inputs
+  if (curMethod === 'pdf' && !fileB64) { toast('Please select a PDF file first'); return; }
   if (curMethod === 'paste') {
     const t = document.getElementById('paste-in').value.trim();
     if (!t || t.length < 15) { toast('Paste your bank statement text first'); return; }
@@ -651,55 +605,73 @@ async function doAnalyse() {
   // Show loading UI
   document.getElementById('upload-loading').style.display = '';
   document.getElementById('upload-btn-wrap').style.display = 'none';
-  document.getElementById('m-pdf').style.display  = 'none';
+  document.getElementById('m-pdf').style.display   = 'none';
   document.getElementById('m-paste').style.display = 'none';
   document.querySelector('.seg').style.display = 'none';
   document.querySelector('.banner').style.display = 'none';
+  document.getElementById('load-title').textContent = curMethod === 'pdf' ? 'Sending PDF to Claude…' : 'Analysing statement…';
+  document.getElementById('load-sub').textContent   = 'This usually takes 10–20 seconds';
 
-  const setLoad = (t,s) => {
-    document.getElementById('load-title').textContent = t;
-    document.getElementById('load-sub').textContent   = s;
-  };
+  const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY a valid JSON object — no markdown fences, no explanation, just raw JSON.
 
-  const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY a valid JSON object with no markdown fences, no preamble, no explanation whatsoever.
-
-Return EXACTLY this JSON structure:
+Return EXACTLY this structure:
 {
   "period": "May 2025",
   "months": 1,
   "totalIncome": 5200,
   "totalSpend": 3100,
   "transactions": [
-    {"date":"01/05/2025","description":"Woolworths Fitzroy","amount":-62.40,"category":"Groceries"}
+    {"date":"01/05/2025","description":"Woolworths","amount":-62.40,"category":"Groceries"}
   ],
   "categories": [
     {"name":"Groceries","amount":450,"count":8}
   ],
   "savingsTips": [
-    {"title":"Cut back on dining","body":"You spent $380 on restaurants this month — reducing by half saves ~$190/month.","saving":190}
+    {"title":"Cut dining out","body":"You spent $380 on restaurants — cutting by half saves $190/month.","saving":190}
   ]
 }
 
 Rules:
-- negative amounts = spending, positive = income/credits
-- If statement spans multiple months: set months accordingly and normalise ALL amounts to monthly averages
-- totalIncome and totalSpend must always be monthly figures
-- Categories MUST only be from: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
-- Do NOT create an Income category
-- Generate 4-5 specific savings tips with real dollar amounts from the data
-- Return ONLY raw JSON, nothing else`;
+- negative amounts = spending, positive = income
+- If multiple months: normalise amounts to monthly averages
+- Categories only from: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
+- Do NOT add an Income category
+- 4-5 savings tips with real dollar figures
+- Return ONLY raw JSON`;
 
   const showError = (msg) => {
+    dbg('ERROR shown to user: ' + msg);
     document.getElementById('upload-loading').style.display = 'none';
     document.getElementById('upload-btn-wrap').style.display = '';
     document.getElementById('m-pdf').style.display   = curMethod==='pdf'   ? '' : 'none';
     document.getElementById('m-paste').style.display = curMethod==='paste' ? '' : 'none';
     document.querySelector('.seg').style.display = 'flex';
     document.querySelector('.banner').style.display = 'flex';
-    toast('Analysis failed: ' + msg);
+    // Show debug panel
+    document.getElementById('debug-panel').style.display = '';
+    toast('Failed: ' + msg);
   };
 
-  const callAPI = async (messages) => {
+  try {
+    let messages;
+
+    if (curMethod === 'paste') {
+      const txt = document.getElementById('paste-in').value.trim();
+      dbg('Paste mode: ' + txt.length + ' chars');
+      messages = [{ role:'user', content: 'Bank statement:\n\n' + txt + '\n\n' + PROMPT }];
+    } else {
+      // PDF mode — send base64 PDF directly to Claude
+      dbg('PDF mode: sending ' + fileB64.length + ' base64 chars to API');
+      messages = [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileB64 } },
+          { type: 'text', text: PROMPT }
+        ]
+      }];
+    }
+
+    dbg('Calling Anthropic API…');
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -710,60 +682,25 @@ Rules:
       },
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages })
     });
+
+    dbg('API response status: ' + res.status);
+
     if (!res.ok) {
       let errMsg = 'HTTP ' + res.status;
-      try { const e = await res.json(); errMsg = e.error?.message || errMsg; } catch {}
+      try { const e = await res.json(); errMsg = e.error?.message || errMsg; } catch(pe) { dbg('Could not parse error JSON: ' + pe.message); }
       throw new Error(errMsg);
     }
+
     const d = await res.json();
-    const txt = d.content.map(b => b.text||'').join('').replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
-    if (!txt) throw new Error('Empty response from API');
-    return JSON.parse(txt);
-  };
+    dbg('API response received. Content blocks: ' + d.content?.length);
+    const rawText = d.content.map(b => b.text||'').join('').trim();
+    dbg('Raw text length: ' + rawText.length + ' first 80: ' + rawText.substring(0,80));
 
-  try {
-    let messages;
+    const cleaned = rawText.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
+    BD = JSON.parse(cleaned);
+    dbg('Parsed OK. Income=' + BD.totalIncome + ' Spend=' + BD.totalSpend + ' Transactions=' + (BD.transactions||[]).length);
 
-    if (curMethod === 'paste') {
-      // ── Text paste ──────────────────────────────────
-      setLoad('Analysing statement…', 'Categorising transactions and building your budget');
-      const txt = document.getElementById('paste-in').value.trim();
-      messages = [{ role:'user', content: `Bank statement data:\n\n${txt}\n\n${PROMPT}` }];
-
-    } else if (pdfText && pdfText.length >= 50) {
-      // ── Text-based PDF (best quality) ───────────────
-      setLoad('Reading statement…', `Analysing ${pdfText.length.toLocaleString()} characters of transaction data`);
-      messages = [{ role:'user', content: `Bank statement extracted from PDF:\n\n${pdfText.substring(0,12000)}\n\n${PROMPT}` }];
-
-    } else if (filePages.length > 0) {
-      // ── Image-based PDF (scanned) ────────────────────
-      setLoad('Reading PDF images…', `Analysing ${filePages.length} page${filePages.length>1?'s':''} visually`);
-      const content = filePages.map(b64 => ({
-        type: 'image',
-        source: { type:'base64', media_type:'image/jpeg', data: b64 }
-      }));
-      content.push({ type:'text', text: PROMPT });
-      messages = [{ role:'user', content }];
-
-    } else if (fileB64) {
-      // ── Direct PDF document (fallback) ───────────────
-      setLoad('Extracting data…', 'Sending PDF directly to Claude for analysis');
-      messages = [{
-        role: 'user',
-        content: [
-          { type:'document', source:{ type:'base64', media_type:'application/pdf', data: fileB64 } },
-          { type:'text', text: PROMPT }
-        ]
-      }];
-
-    } else {
-      throw new Error('No statement data found. Please upload a PDF or paste text.');
-    }
-
-    setLoad('Categorising transactions…', 'Building your monthly budget breakdown');
-    BD = await callAPI(messages);
-
-    if (!BD.totalIncome && !BD.totalSpend) throw new Error('Could not read transaction data from this statement. Try the Paste text method.');
+    if (!BD.totalIncome && !BD.totalSpend) throw new Error('No financial data found in statement');
 
     renderAll();
     scheduleSave();
@@ -771,11 +708,10 @@ Rules:
     toast('Statement analysed ✓');
 
   } catch(err) {
-    console.error('Analysis error:', err);
+    dbg('CAUGHT: ' + err.name + ': ' + err.message);
     showError(err.message);
   }
 }
-
 // ═══════════════════════════════════════════════
 // Render
 // ═══════════════════════════════════════════════
@@ -1104,7 +1040,9 @@ function confirmReset() {
     document.getElementById('file-ready').style.display = 'none';
     document.querySelector('.seg').style.display = 'flex';
     document.querySelector('.banner').style.display = 'flex';
-    fileB64 = null; filePages = []; pdfText = '';
+    fileB64 = null; debugLog = [];
+    document.getElementById('debug-panel').style.display = 'none';
+    document.getElementById('debug-log').textContent = '';
     curMethod = 'pdf';
     document.querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('on', i===0));
     showTab('upload');
