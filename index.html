@@ -445,11 +445,11 @@ input,select,textarea{font-family:var(--font);color:var(--t1)}
 </div><!-- /app -->
 <div id="toast"></div>
 
-<!-- ── PDF.js ─────────────────────────────────────────── -->
+<!-- ── PDF.js (legacy build = no separate worker needed) ── -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Use fake worker so PDF.js works without a separate worker file (avoids CDN worker CSP issues)
+pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
 // ═══════════════════════════════════════════════
 // State
@@ -458,7 +458,8 @@ let BD = null;         // budgetData
 let AX = [];           // addedSpends
 let TF = 'All';        // txFilter
 let fileB64 = null;    // PDF base64 for API
-let filePages = [];    // rendered page images
+let filePages = [];    // rendered page images (image-based PDFs)
+let pdfText  = '';     // extracted text from text-based PDFs
 let curMethod = 'pdf';
 let syncTmr = null;
 
@@ -537,37 +538,89 @@ function dLeave(e) { document.getElementById('dropzone').classList.remove('over'
 function dDrop(e)  { e.preventDefault(); dLeave(e); if(e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
 function onFileChange(e) { if(e.target.files[0]) processFile(e.target.files[0]); }
 
+// Promisified FileReader
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = e => resolve(e.target.result);
+    r.onerror = () => reject(new Error('File read failed'));
+    r.readAsDataURL(file);
+  });
+}
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = e => resolve(e.target.result);
+    r.onerror = () => reject(new Error('File read failed'));
+    r.readAsArrayBuffer(file);
+  });
+}
+
 async function processFile(file) {
   if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
+
   document.getElementById('fn').textContent = file.name;
-  document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF';
+  document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF — processing…';
   document.getElementById('file-ready').style.display = '';
   document.getElementById('dropzone').style.display = 'none';
 
-  // Read as base64 for the API
-  const reader = new FileReader();
-  reader.onload = e => {
-    fileB64 = e.target.result.split(',')[1];
-  };
-  reader.readAsDataURL(file);
+  fileB64 = null; filePages = []; pdfText = '';
 
-  // Also render pages to canvas for image-based extraction
   try {
-    const ab = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
-    filePages = [];
-    const maxPages = Math.min(pdf.numPages, 8); // cap at 8 pages
+    // 1. Read as base64 (for direct PDF API call fallback)
+    const dataUrl = await readFileAsDataURL(file);
+    fileB64 = dataUrl.split(',')[1];
+
+    // 2. Extract text from PDF with PDF.js (most reliable approach)
+    const ab  = await readFileAsArrayBuffer(file);
+    // Use fake worker to avoid CDN worker CSP issues
+    const pdf = await pdfjsLib.getDocument({ data: ab, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
+
+    let allText = '';
+    const maxPages = Math.min(pdf.numPages, 12);
     for (let i = 1; i <= maxPages; i++) {
-      const page = await pdf.getPage(i);
-      const vp = page.getViewport({ scale: 1.5 });
-      const canvas = document.createElement('canvas');
-      canvas.width = vp.width; canvas.height = vp.height;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-      filePages.push(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      const page    = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      // Reconstruct rows by grouping items by Y position
+      const items   = content.items;
+      const rows    = {};
+      for (const item of items) {
+        const y = Math.round(item.transform[5]);
+        if (!rows[y]) rows[y] = [];
+        rows[y].push({ x: item.transform[4], str: item.str });
+      }
+      const sortedYs = Object.keys(rows).map(Number).sort((a,b) => b-a);
+      for (const y of sortedYs) {
+        const line = rows[y].sort((a,b) => a.x-b.x).map(i => i.str).join(' ').trim();
+        if (line) allText += line + '\n';
+      }
+      allText += '\n';
     }
-    toast(`PDF loaded — ${pdf.numPages} page${pdf.numPages>1?'s':''}`);
+    pdfText = allText.trim();
+
+    if (pdfText.length < 50) {
+      // Text extraction yielded nothing — PDF is likely scanned/image-based
+      // Fall back to rendering pages as images
+      filePages = [];
+      for (let i = 1; i <= Math.min(pdf.numPages, 6); i++) {
+        const page = await pdf.getPage(i);
+        const vp   = page.getViewport({ scale: 1.8 });
+        const canvas = document.createElement('canvas');
+        canvas.width = vp.width; canvas.height = vp.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+        filePages.push(canvas.toDataURL('image/jpeg', 0.80).split(',')[1]);
+      }
+      document.getElementById('fs').textContent = `${(file.size/1024).toFixed(1)} KB · ${pdf.numPages} pages (image-based)`;
+      toast(`PDF loaded — using visual mode (${pdf.numPages} pages)`);
+    } else {
+      document.getElementById('fs').textContent = `${(file.size/1024).toFixed(1)} KB · ${pdf.numPages} pages · ${pdfText.length.toLocaleString()} chars`;
+      toast(`PDF loaded — ${pdf.numPages} page${pdf.numPages>1?'s':''} · ${pdfText.length.toLocaleString()} characters extracted`);
+    }
   } catch(err) {
-    toast('PDF read error — will use text extraction');
+    console.error('PDF processing error:', err);
+    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · PDF (basic mode)';
+    toast('PDF loaded in basic mode — tap Analyse to continue');
+    // fileB64 still set, will use direct PDF API call
   }
 }
 
@@ -586,13 +639,27 @@ async function doAnalyse() {
   const k = key();
   if (!k) { showTab('settings'); toast('Add your API key in Settings'); return; }
 
-  // Show loading
+  // Validate we have something to send
+  if (curMethod === 'pdf' && !fileB64 && !filePages.length && !pdfText) {
+    toast('Please select a PDF file first'); return;
+  }
+  if (curMethod === 'paste') {
+    const t = document.getElementById('paste-in').value.trim();
+    if (!t || t.length < 15) { toast('Paste your bank statement text first'); return; }
+  }
+
+  // Show loading UI
   document.getElementById('upload-loading').style.display = '';
   document.getElementById('upload-btn-wrap').style.display = 'none';
   document.getElementById('m-pdf').style.display  = 'none';
   document.getElementById('m-paste').style.display = 'none';
   document.querySelector('.seg').style.display = 'none';
   document.querySelector('.banner').style.display = 'none';
+
+  const setLoad = (t,s) => {
+    document.getElementById('load-title').textContent = t;
+    document.getElementById('load-sub').textContent   = s;
+  };
 
   const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY a valid JSON object with no markdown fences, no preamble, no explanation whatsoever.
 
@@ -615,52 +682,24 @@ Return EXACTLY this JSON structure:
 
 Rules:
 - negative amounts = spending, positive = income/credits
-- If the statement spans multiple months: set months accordingly and normalise ALL amounts to monthly averages (divide by months)
+- If statement spans multiple months: set months accordingly and normalise ALL amounts to monthly averages
 - totalIncome and totalSpend must always be monthly figures
-- Categories MUST only be from this list: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
-- Do NOT create an Income category — income is a separate field
-- Generate 4–5 specific, actionable savings tips referencing real dollar amounts from the data
-- Return ONLY raw JSON — absolutely nothing else`;
+- Categories MUST only be from: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
+- Do NOT create an Income category
+- Generate 4-5 specific savings tips with real dollar amounts from the data
+- Return ONLY raw JSON, nothing else`;
 
-  try {
-    let messages;
+  const showError = (msg) => {
+    document.getElementById('upload-loading').style.display = 'none';
+    document.getElementById('upload-btn-wrap').style.display = '';
+    document.getElementById('m-pdf').style.display   = curMethod==='pdf'   ? '' : 'none';
+    document.getElementById('m-paste').style.display = curMethod==='paste' ? '' : 'none';
+    document.querySelector('.seg').style.display = 'flex';
+    document.querySelector('.banner').style.display = 'flex';
+    toast('Analysis failed: ' + msg);
+  };
 
-    if (curMethod === 'pdf' && filePages.length > 0) {
-      // Use vision: send rendered PDF pages as images
-      document.getElementById('load-title').textContent = 'Reading PDF…';
-      document.getElementById('load-sub').textContent = `Analysing ${filePages.length} page${filePages.length>1?'s':''} from your statement`;
-
-      const imageContent = filePages.map(b64 => ({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: b64 }
-      }));
-      imageContent.push({ type: 'text', text: PROMPT });
-      messages = [{ role: 'user', content: imageContent }];
-
-    } else if (curMethod === 'pdf' && fileB64) {
-      // Fallback: send as PDF document
-      document.getElementById('load-title').textContent = 'Extracting data…';
-      document.getElementById('load-sub').textContent = 'Reading transactions from your PDF';
-      messages = [{
-        role: 'user',
-        content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileB64 } },
-          { type: 'text', text: PROMPT }
-        ]
-      }];
-
-    } else {
-      // Paste method
-      const txt = document.getElementById('paste-in').value.trim();
-      if (!txt || txt.length < 15) { throw new Error('Paste your bank statement text first'); }
-      document.getElementById('load-title').textContent = 'Analysing statement…';
-      document.getElementById('load-sub').textContent = 'Categorising transactions and building your budget';
-      messages = [{ role: 'user', content: txt + '\n\n' + PROMPT }];
-    }
-
-    document.getElementById('load-title').textContent = 'Categorising transactions…';
-    document.getElementById('load-sub').textContent = 'Building your monthly budget breakdown';
-
+  const callAPI = async (messages) => {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -671,24 +710,69 @@ Rules:
       },
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages })
     });
-
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || 'API error ' + res.status); }
+    if (!res.ok) {
+      let errMsg = 'HTTP ' + res.status;
+      try { const e = await res.json(); errMsg = e.error?.message || errMsg; } catch {}
+      throw new Error(errMsg);
+    }
     const d = await res.json();
-    const txt2 = d.content.map(b => b.text||'').join('');
-    BD = JSON.parse(txt2.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
+    const txt = d.content.map(b => b.text||'').join('').replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+    if (!txt) throw new Error('Empty response from API');
+    return JSON.parse(txt);
+  };
+
+  try {
+    let messages;
+
+    if (curMethod === 'paste') {
+      // ── Text paste ──────────────────────────────────
+      setLoad('Analysing statement…', 'Categorising transactions and building your budget');
+      const txt = document.getElementById('paste-in').value.trim();
+      messages = [{ role:'user', content: `Bank statement data:\n\n${txt}\n\n${PROMPT}` }];
+
+    } else if (pdfText && pdfText.length >= 50) {
+      // ── Text-based PDF (best quality) ───────────────
+      setLoad('Reading statement…', `Analysing ${pdfText.length.toLocaleString()} characters of transaction data`);
+      messages = [{ role:'user', content: `Bank statement extracted from PDF:\n\n${pdfText.substring(0,12000)}\n\n${PROMPT}` }];
+
+    } else if (filePages.length > 0) {
+      // ── Image-based PDF (scanned) ────────────────────
+      setLoad('Reading PDF images…', `Analysing ${filePages.length} page${filePages.length>1?'s':''} visually`);
+      const content = filePages.map(b64 => ({
+        type: 'image',
+        source: { type:'base64', media_type:'image/jpeg', data: b64 }
+      }));
+      content.push({ type:'text', text: PROMPT });
+      messages = [{ role:'user', content }];
+
+    } else if (fileB64) {
+      // ── Direct PDF document (fallback) ───────────────
+      setLoad('Extracting data…', 'Sending PDF directly to Claude for analysis');
+      messages = [{
+        role: 'user',
+        content: [
+          { type:'document', source:{ type:'base64', media_type:'application/pdf', data: fileB64 } },
+          { type:'text', text: PROMPT }
+        ]
+      }];
+
+    } else {
+      throw new Error('No statement data found. Please upload a PDF or paste text.');
+    }
+
+    setLoad('Categorising transactions…', 'Building your monthly budget breakdown');
+    BD = await callAPI(messages);
+
+    if (!BD.totalIncome && !BD.totalSpend) throw new Error('Could not read transaction data from this statement. Try the Paste text method.');
+
     renderAll();
     scheduleSave();
     showTab('overview');
     toast('Statement analysed ✓');
 
   } catch(err) {
-    document.getElementById('upload-loading').style.display = 'none';
-    document.getElementById('upload-btn-wrap').style.display = '';
-    document.getElementById('m-pdf').style.display = curMethod==='pdf' ? '' : 'none';
-    document.getElementById('m-paste').style.display = curMethod==='paste' ? '' : 'none';
-    document.querySelector('.seg').style.display = 'flex';
-    document.querySelector('.banner').style.display = 'flex';
-    toast('Analysis failed: ' + err.message);
+    console.error('Analysis error:', err);
+    showError(err.message);
   }
 }
 
@@ -1020,7 +1104,7 @@ function confirmReset() {
     document.getElementById('file-ready').style.display = 'none';
     document.querySelector('.seg').style.display = 'flex';
     document.querySelector('.banner').style.display = 'flex';
-    fileB64 = null; filePages = [];
+    fileB64 = null; filePages = []; pdfText = '';
     curMethod = 'pdf';
     document.querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('on', i===0));
     showTab('upload');
