@@ -671,28 +671,43 @@ Rules:
       }];
     }
 
-    dbg('Calling Anthropic API…');
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const scriptUrl = script();
+    if (!scriptUrl) throw new Error('Apps Script URL not set — go to Settings');
+
+    dbg('Calling proxy: ' + scriptUrl.substring(0,60) + '…');
+
+    // Send API key + messages to Apps Script, which calls Anthropic server-side (no CORS issues)
+    const proxyBody = JSON.stringify({
+      action: 'analyse',
+      apiKey: k,
+      messages: messages,
+      model: 'claude-sonnet-4-6'
+    });
+    dbg('Proxy body size: ' + proxyBody.length + ' bytes');
+
+    const res = await fetch(scriptUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': k,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-calls': 'true'
-      },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, messages })
+      headers: { 'Content-Type': 'text/plain' },
+      body: proxyBody
     });
 
-    dbg('API response status: ' + res.status);
-
+    dbg('Proxy response status: ' + res.status);
     if (!res.ok) {
-      let errMsg = 'HTTP ' + res.status;
-      try { const e = await res.json(); errMsg = e.error?.message || errMsg; } catch(pe) { dbg('Could not parse error JSON: ' + pe.message); }
-      throw new Error(errMsg);
+      const errTxt = await res.text().catch(() => '');
+      throw new Error('Proxy error ' + res.status + (errTxt ? ': ' + errTxt.substring(0,100) : ''));
     }
 
-    const d = await res.json();
-    dbg('API response received. Content blocks: ' + d.content?.length);
+    const respText = await res.text();
+    dbg('Proxy raw response length: ' + respText.length + ' preview: ' + respText.substring(0,120));
+
+    let d;
+    try { d = JSON.parse(respText); }
+    catch(pe) { throw new Error('Could not parse proxy response: ' + respText.substring(0,200)); }
+
+    dbg('Proxy response keys: ' + Object.keys(d).join(', '));
+    if (d.error) throw new Error('Claude API error: ' + d.error);
+    if (!d.content) throw new Error('No content returned — check your Apps Script is redeployed');
+
     const rawText = d.content.map(b => b.text||'').join('').trim();
     dbg('Raw text length: ' + rawText.length + ' first 80: ' + rawText.substring(0,80));
 
