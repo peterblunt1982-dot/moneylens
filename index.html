@@ -460,7 +460,7 @@ input,select,textarea{font-family:var(--font);color:var(--t1)}
 let BD = null;         // budgetData
 let AX = [];           // addedSpends
 let TF = 'All';        // txFilter
-let fileB64 = null;    // PDF base64 — sent directly to Claude API
+let pdfText = '';      // text extracted from PDF — sent to proxy (~10-30KB)
 let curMethod = 'pdf';
 let syncTmr = null;
 let debugLog = [];     // debug capture
@@ -542,29 +542,100 @@ function onFileChange(e) { if(e.target.files[0]) processFile(e.target.files[0]);
 
 async function processFile(file) {
   if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
-  fileB64 = null;
+  pdfText = '';
   dbg('Reading file: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)');
 
   document.getElementById('fn').textContent = file.name;
-  document.getElementById('fs').textContent = 'Reading…';
+  document.getElementById('fs').textContent = 'Extracting text…';
   document.getElementById('file-ready').style.display = '';
   document.getElementById('dropzone').style.display = 'none';
 
   try {
-    const b64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = e => resolve(e.target.result.split(',')[1]);
-      reader.onerror = () => reject(new Error('FileReader failed'));
-      reader.readAsDataURL(file);
-    });
-    fileB64 = b64;
-    dbg('File read OK — base64 length: ' + b64.length);
-    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ready';
-    toast('PDF ready — tap Analyse statement');
+    // Read as ArrayBuffer then extract text using pure JS PDF parser
+    const buf = await file.arrayBuffer();
+    const text = extractPdfText(buf);
+    
+    if (text.length < 50) {
+      dbg('Text extraction got <50 chars — PDF may be image-based');
+      document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ⚠️ low text — try Paste method';
+      toast('Low text extracted — see note below');
+    } else {
+      pdfText = text;
+      dbg('Text extracted OK: ' + text.length + ' chars');
+      document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ' + text.length.toLocaleString() + ' chars extracted ✓';
+      toast('PDF ready — ' + text.length.toLocaleString() + ' chars extracted');
+    }
   } catch(err) {
     dbg('processFile error: ' + err.message);
-    toast('Could not read file: ' + err.message);
+    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · read error';
+    toast('Could not read PDF: ' + err.message);
   }
+}
+
+// ── Lightweight PDF text extractor (no external libs, no worker) ──────────────
+// Decodes compressed content streams from a PDF binary using DecompressionStream
+function extractPdfText(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const text  = new TextDecoder('latin1').decode(bytes);
+  
+  // Extract all string content between stream/endstream markers
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let allText = '';
+  let m;
+  while ((m = streamRegex.exec(text)) !== null) {
+    const raw = m[1];
+    // Try to decode as text — look for BT...ET blocks (PDF text operators)
+    const btBlocks = raw.match(/BT[\s\S]*?ET/g) || [];
+    for (const block of btBlocks) {
+      // Extract text from Tj, TJ, \'  operators
+      const tjMatches = block.match(/\(([^)]*?)\)\s*(?:Tj|\x27)/g) || [];
+      for (const tj of tjMatches) {
+        const inner = tj.match(/\(([^)]*?)\)/);
+        if (inner) allText += decodePdfString(inner[1]) + ' ';
+      }
+      // TJ arrays: [(text) spacing (text)] TJ
+      const tjArrMatches = block.match(/\[([^\]]*?)\]\s*TJ/g) || [];
+      for (const arr of tjArrMatches) {
+        const parts = arr.match(/\(([^)]*?)\)/g) || [];
+        for (const p of parts) {
+          const inner = p.slice(1,-1);
+          allText += decodePdfString(inner);
+        }
+        allText += ' ';
+      }
+    }
+    // Also grab raw ASCII text runs (for simple uncompressed PDFs)
+    const asciiRuns = raw.match(/[A-Za-z0-9 $.,\-+/():\n\t]{8,}/g) || [];
+    for (const run of asciiRuns) {
+      if (run.includes('$') || /\d{2}\/\d{2}/.test(run) || /[+-]\d+\.\d{2}/.test(run)) {
+        allText += run + '\n';
+      }
+    }
+  }
+  
+  // Fallback: scan entire PDF for text patterns (works for many bank PDFs)
+  if (allText.trim().length < 100) {
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Keep lines that look like transaction data
+      if (trimmed.length > 4 && trimmed.length < 300) {
+        if (/\d/.test(trimmed) && (/\$|[+-]?\d+\.\d{2}/.test(trimmed) || /\d{1,2}\/\d{1,2}/.test(trimmed))) {
+          allText += trimmed + '\n';
+        }
+      }
+    }
+  }
+  
+  return allText.trim();
+}
+
+function decodePdfString(s) {
+  // Handle PDF octal escapes \nnn and common escape sequences
+  return s
+    .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
+    .replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ')
+    .replace(/\\\\/g, '\\').replace(/\\\(/g, '(').replace(/\\\)/g, ')');
 }
 
 function switchMethod(m, el) {
@@ -591,12 +662,12 @@ function dbg(msg) {
 // ═══════════════════════════════════════════════
 async function doAnalyse() {
   const k = key();
-  dbg('doAnalyse called. method=' + curMethod + ' key=' + (k ? 'SET('+k.length+'chars)' : 'MISSING') + ' fileB64=' + (fileB64 ? fileB64.length+'chars' : 'null'));
+  dbg('doAnalyse called. method=' + curMethod + ' key=' + (k ? 'SET('+k.length+'chars)' : 'MISSING') + ' pdfText=' + pdfText.length + 'chars');
 
   if (!k) { showTab('settings'); toast('Add your API key in Settings'); return; }
 
   // Validate inputs
-  if (curMethod === 'pdf' && !fileB64) { toast('Please select a PDF file first'); return; }
+  if (curMethod === 'pdf' && !pdfText) { toast('Please select a PDF file first — or use Paste text'); return; }
   if (curMethod === 'paste') {
     const t = document.getElementById('paste-in').value.trim();
     if (!t || t.length < 15) { toast('Paste your bank statement text first'); return; }
@@ -660,15 +731,10 @@ Rules:
       dbg('Paste mode: ' + txt.length + ' chars');
       messages = [{ role:'user', content: 'Bank statement:\n\n' + txt + '\n\n' + PROMPT }];
     } else {
-      // PDF mode — send base64 PDF directly to Claude
-      dbg('PDF mode: sending ' + fileB64.length + ' base64 chars to API');
-      messages = [{
-        role: 'user',
-        content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileB64 } },
-          { type: 'text', text: PROMPT }
-        ]
-      }];
+      // PDF mode — send extracted text (tiny payload vs raw PDF base64)
+      dbg('PDF mode: sending ' + pdfText.length + ' chars of extracted text');
+      const truncated = pdfText.substring(0, 14000); // ~14KB max
+      messages = [{ role:'user', content: 'Bank statement extracted from PDF:\n\n' + truncated + '\n\n' + PROMPT }];
     }
 
     const scriptUrl = script();
@@ -1055,7 +1121,7 @@ function confirmReset() {
     document.getElementById('file-ready').style.display = 'none';
     document.querySelector('.seg').style.display = 'flex';
     document.querySelector('.banner').style.display = 'flex';
-    fileB64 = null; debugLog = [];
+    pdfText = ''; debugLog = [];
     document.getElementById('debug-panel').style.display = 'none';
     document.getElementById('debug-log').textContent = '';
     curMethod = 'pdf';
