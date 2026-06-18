@@ -460,7 +460,8 @@ input,select,textarea{font-family:var(--font);color:var(--t1)}
 let BD = null;         // budgetData
 let AX = [];           // addedSpends
 let TF = 'All';        // txFilter
-let pdfText = '';      // text extracted from PDF — sent to proxy (~10-30KB)
+let pdfText    = '';   // text extracted from PDF
+let pageImages = [];   // JPEG base64 images of PDF pages (image-based PDFs)
 let curMethod = 'pdf';
 let syncTmr = null;
 let debugLog = [];     // debug capture
@@ -542,101 +543,221 @@ function onFileChange(e) { if(e.target.files[0]) processFile(e.target.files[0]);
 
 async function processFile(file) {
   if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
-  pdfText = '';
-  dbg('Reading file: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)');
+  pdfText = ''; pageImages = [];
+  dbg('Reading: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)');
 
   document.getElementById('fn').textContent = file.name;
-  document.getElementById('fs').textContent = 'Extracting text…';
+  document.getElementById('fs').textContent = 'Processing PDF…';
   document.getElementById('file-ready').style.display = '';
   document.getElementById('dropzone').style.display = 'none';
 
   try {
-    // Read as ArrayBuffer then extract text using pure JS PDF parser
     const buf = await file.arrayBuffer();
-    const text = extractPdfText(buf);
-    
-    if (text.length < 50) {
-      dbg('Text extraction got <50 chars — PDF may be image-based');
-      document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ⚠️ low text — try Paste method';
-      toast('Low text extracted — see note below');
-    } else {
+
+    // Step 1: try to extract text (async — handles compressed streams)
+    const text = await extractPdfText(buf);
+    dbg('Text extraction: ' + text.length + ' chars');
+
+    if (text.length >= 200) {
+      // Good text-based PDF
       pdfText = text;
-      dbg('Text extracted OK: ' + text.length + ' chars');
-      document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · ' + text.length.toLocaleString() + ' chars extracted ✓';
-      toast('PDF ready — ' + text.length.toLocaleString() + ' chars extracted');
+      document.getElementById('fs').textContent =
+        (file.size/1024).toFixed(1) + ' KB · ' + text.length.toLocaleString() + ' chars extracted ✓';
+      toast('PDF ready · ' + text.length.toLocaleString() + ' chars');
+    } else {
+      // Image-based PDF — render pages to canvas via PDF.js
+      dbg('Low text (' + text.length + ' chars) — rendering pages as images');
+      document.getElementById('fs').textContent = 'Rendering pages…';
+      await renderPdfPages(buf, file.size);
     }
   } catch(err) {
     dbg('processFile error: ' + err.message);
-    document.getElementById('fs').textContent = (file.size/1024).toFixed(1) + ' KB · read error';
-    toast('Could not read PDF: ' + err.message);
+    document.getElementById('fs').textContent = 'Error: ' + err.message;
+    toast('PDF error: ' + err.message);
   }
 }
 
-// ── Lightweight PDF text extractor (no external libs, no worker) ──────────────
-// Decodes compressed content streams from a PDF binary using DecompressionStream
-function extractPdfText(arrayBuffer) {
+// ── Render PDF pages to JPEG images using PDF.js via CDN ──────────────────────
+async function renderPdfPages(buf, fileSize) {
+  // Dynamically load PDF.js only when needed (image-based PDFs)
+  if (!window.pdfjsLib) {
+    dbg('Loading PDF.js…');
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload  = resolve;
+      s.onerror = () => reject(new Error('Could not load PDF.js'));
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    dbg('PDF.js loaded');
+  }
+
+  const pdf      = await window.pdfjsLib.getDocument({ data: buf }).promise;
+  const maxPages = Math.min(pdf.numPages, 5); // 5 pages max to keep payload reasonable
+  dbg('Rendering ' + maxPages + ' of ' + pdf.numPages + ' pages');
+  pageImages = [];
+
+  for (let i = 1; i <= maxPages; i++) {
+    document.getElementById('fs').textContent = 'Rendering page ' + i + ' of ' + maxPages + '…';
+    const page   = await pdf.getPage(i);
+    const scale  = Math.min(1.5, 1800 / Math.max(page.getViewport({scale:1}).width, page.getViewport({scale:1}).height));
+    const vp     = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    pageImages.push(canvas.toDataURL('image/jpeg', 0.82).split(',')[1]);
+    dbg('Page ' + i + ' rendered: ' + Math.round(pageImages[pageImages.length-1].length/1024) + ' KB');
+  }
+
+  const totalKB = Math.round(pageImages.reduce((s,p) => s+p.length, 0) / 1024);
+  document.getElementById('fs').textContent =
+    (fileSize/1024).toFixed(1) + ' KB PDF · ' + pageImages.length + ' pages rendered (' + totalKB + ' KB) ✓';
+  toast(pageImages.length + ' pages ready — tap Analyse');
+}
+
+// ── PDF text extractor — handles FlateDecode compressed streams ───────────────
+// Most Australian bank PDFs use zlib-compressed content streams.
+// We use the browser's built-in DecompressionStream to handle them.
+async function extractPdfText(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
-  const text  = new TextDecoder('latin1').decode(bytes);
-  
-  // Extract all string content between stream/endstream markers
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let allText = '';
-  let m;
-  while ((m = streamRegex.exec(text)) !== null) {
-    const raw = m[1];
-    // Try to decode as text — look for BT...ET blocks (PDF text operators)
-    const btBlocks = raw.match(/BT[\s\S]*?ET/g) || [];
-    for (const block of btBlocks) {
-      // Extract text from Tj, TJ, \'  operators
-      const tjMatches = block.match(/\(([^)]*?)\)\s*(?:Tj|\x27)/g) || [];
-      for (const tj of tjMatches) {
-        const inner = tj.match(/\(([^)]*?)\)/);
-        if (inner) allText += decodePdfString(inner[1]) + ' ';
-      }
-      // TJ arrays: [(text) spacing (text)] TJ
-      const tjArrMatches = block.match(/\[([^\]]*?)\]\s*TJ/g) || [];
-      for (const arr of tjArrMatches) {
-        const parts = arr.match(/\(([^)]*?)\)/g) || [];
-        for (const p of parts) {
-          const inner = p.slice(1,-1);
-          allText += decodePdfString(inner);
-        }
-        allText += ' ';
-      }
+  const raw   = new TextDecoder('latin1').decode(bytes);
+
+  // Pass 1: uncompressed BT/ET blocks (works for simple PDFs)
+  let out = parseBTBlocks(raw);
+
+  // Pass 2: decompress FlateDecode streams then parse their BT/ET blocks
+  if (out.trim().length < 300) {
+    dbg('Text sparse — trying FlateDecode decompression…');
+    const decompressed = await decompressFlatStreams(bytes, raw);
+    for (const text of decompressed) {
+      out += parseBTBlocks(text);
     }
-    // Also grab raw ASCII text runs (for simple uncompressed PDFs)
-    const asciiRuns = raw.match(/[A-Za-z0-9 $.,\-+/():\n\t]{8,}/g) || [];
-    for (const run of asciiRuns) {
-      if (run.includes('$') || /\d{2}\/\d{2}/.test(run) || /[+-]\d+\.\d{2}/.test(run)) {
-        allText += run + '\n';
-      }
-    }
+    dbg('After decompression: ' + out.trim().length + ' chars');
   }
-  
-  // Fallback: scan entire PDF for text patterns (works for many bank PDFs)
-  if (allText.trim().length < 100) {
-    const lines = text.split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      // Keep lines that look like transaction data
-      if (trimmed.length > 4 && trimmed.length < 300) {
-        if (/\d/.test(trimmed) && (/\$|[+-]?\d+\.\d{2}/.test(trimmed) || /\d{1,2}\/\d{1,2}/.test(trimmed))) {
-          allText += trimmed + '\n';
-        }
-      }
-    }
+
+  // Pass 3: broad scan for transaction-shaped lines
+  if (out.trim().length < 300) {
+    dbg('Still sparse — running broad line scan');
+    out += broadLineScan(raw);
   }
-  
-  return allText.trim();
+
+  return out.trim();
 }
 
-function decodePdfString(s) {
-  // Handle PDF octal escapes \nnn and common escape sequences
+function parseBTBlocks(text) {
+  let out = '';
+  const btRe = /BT[\s\S]*?ET/g;
+  let m;
+  while ((m = btRe.exec(text)) !== null) {
+    const block = m[0];
+    // (string) Tj
+    const tjRe = /\(([^)]{0,400})\)\s*Tj/g;
+    let t;
+    while ((t = tjRe.exec(block)) !== null) out += decodePdfStr(t[1]) + ' ';
+    // [(str) num] TJ
+    const taRe = /\[([^\]]{0,600})\]\s*TJ/g;
+    while ((t = taRe.exec(block)) !== null) {
+      const parts = t[1].match(/\(([^)]{0,300})\)/g) || [];
+      parts.forEach(p => { out += decodePdfStr(p.slice(1, -1)); });
+      out += ' ';
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+async function decompressFlatStreams(bytes, rawText) {
+  const results = [];
+  // Find dictionary+stream pairs — look for /FlateDecode in the object dict
+  // then grab the stream bytes after 'stream\n'
+  let searchPos = 0;
+  while (searchPos < rawText.length) {
+    const streamIdx = rawText.indexOf('stream', searchPos);
+    if (streamIdx < 0) break;
+
+    // Check char after 'stream' is \r\n or \n
+    const afterStream = rawText[streamIdx + 6];
+    if (afterStream !== '\n' && afterStream !== '\r') { searchPos = streamIdx + 1; continue; }
+    const dataStart = streamIdx + 6 + (afterStream === '\r' ? 2 : 1);
+
+    const endIdx = rawText.indexOf('endstream', dataStart);
+    if (endIdx < 0) break;
+
+    // Check if the object dict (before stream) mentions FlateDecode
+    const dictRegion = rawText.slice(Math.max(0, streamIdx - 500), streamIdx);
+    if (!dictRegion.includes('FlateDecode') && !dictRegion.includes('Fl ')) {
+      searchPos = endIdx + 9; continue;
+    }
+
+    // Extract the raw stream bytes
+    const streamBytes = bytes.slice(dataStart, endIdx);
+    if (streamBytes.length < 4) { searchPos = endIdx + 9; continue; }
+
+    // Attempt zlib decompression (FlateDecode = deflate with zlib wrapper)
+    try {
+      const decompressed = await zlibDecompress(streamBytes);
+      if (decompressed && decompressed.length > 20) {
+        results.push(new TextDecoder('latin1').decode(decompressed));
+      }
+    } catch { /* skip streams that fail */ }
+
+    searchPos = endIdx + 9;
+    if (results.length >= 40) break; // cap to avoid hanging on huge PDFs
+  }
+  return results;
+}
+
+async function zlibDecompress(data) {
+  // Try 'deflate' (zlib format, 0x78 magic byte) then raw 'deflate-raw'
+  const modes = (data[0] === 0x78) ? ['deflate', 'deflate-raw'] : ['deflate-raw', 'deflate'];
+  for (const mode of modes) {
+    try {
+      const ds     = new DecompressionStream(mode);
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      writer.write(data);
+      writer.close().catch(() => {});
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const total  = chunks.reduce((s, c) => s + c.length, 0);
+      const merged = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { merged.set(c, off); off += c.length; }
+      if (merged.length > 10) return merged;
+    } catch { continue; }
+  }
+  return null;
+}
+
+function broadLineScan(text) {
+  // Grab any line containing a date or a decimal amount — catches most transaction rows
+  let out = '';
+  for (const line of text.split(/\r?\n/)) {
+    const l = line.trim();
+    if (l.length < 3 || l.length > 400) continue;
+    if (/\d{1,2}[\/\-]\d{1,2}/.test(l) || /[+\-]?\d+\.\d{2}/.test(l)) {
+      // Filter out binary-looking lines
+      const printable = l.replace(/[^\x20-\x7E]/g, '').trim();
+      if (printable.length > l.length * 0.6) out += printable + '\n';
+    }
+  }
+  return out;
+}
+
+function decodePdfStr(s) {
   return s
-    .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
+    .replace(/\\(\d{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)))
     .replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ')
     .replace(/\\\\/g, '\\').replace(/\\\(/g, '(').replace(/\\\)/g, ')');
 }
+
 
 function switchMethod(m, el) {
   curMethod = m;
@@ -658,34 +779,34 @@ function dbg(msg) {
 }
 
 // ═══════════════════════════════════════════════
-// Analyse
+// Analyse — XHR direct to Anthropic (bypasses Safari PWA CORS block on fetch)
 // ═══════════════════════════════════════════════
 async function doAnalyse() {
   const k = key();
-  dbg('doAnalyse called. method=' + curMethod + ' key=' + (k ? 'SET('+k.length+'chars)' : 'MISSING') + ' pdfText=' + pdfText.length + 'chars');
+  dbg('doAnalyse: method=' + curMethod + ' key=' + (k?'SET('+k.length+'ch)':'MISSING') + ' pdfText=' + pdfText.length + ' pageImages=' + pageImages.length);
 
   if (!k) { showTab('settings'); toast('Add your API key in Settings'); return; }
-
-  // Validate inputs
-  if (curMethod === 'pdf' && !pdfText) { toast('Please select a PDF file first — or use Paste text'); return; }
+  if (curMethod === 'pdf' && pdfText.length < 10 && pageImages.length === 0) {
+    toast('Please select a PDF file first'); return;
+  }
   if (curMethod === 'paste') {
     const t = document.getElementById('paste-in').value.trim();
     if (!t || t.length < 15) { toast('Paste your bank statement text first'); return; }
   }
 
-  // Show loading UI
+  // Show loading
   document.getElementById('upload-loading').style.display = '';
   document.getElementById('upload-btn-wrap').style.display = 'none';
   document.getElementById('m-pdf').style.display   = 'none';
   document.getElementById('m-paste').style.display = 'none';
   document.querySelector('.seg').style.display = 'none';
   document.querySelector('.banner').style.display = 'none';
-  document.getElementById('load-title').textContent = curMethod === 'pdf' ? 'Sending PDF to Claude…' : 'Analysing statement…';
-  document.getElementById('load-sub').textContent   = 'This usually takes 10–20 seconds';
+  document.getElementById('load-title').textContent = 'Analysing statement…';
+  document.getElementById('load-sub').textContent   = 'Usually takes 15–30 seconds';
 
-  const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY a valid JSON object — no markdown fences, no explanation, just raw JSON.
+  const PROMPT = `You are a personal finance analyser for an Australian user. Analyse this bank statement and return ONLY valid JSON — no markdown, no explanation.
 
-Return EXACTLY this structure:
+Return EXACTLY:
 {
   "period": "May 2025",
   "months": 1,
@@ -694,105 +815,98 @@ Return EXACTLY this structure:
   "transactions": [
     {"date":"01/05/2025","description":"Woolworths","amount":-62.40,"category":"Groceries"}
   ],
-  "categories": [
-    {"name":"Groceries","amount":450,"count":8}
-  ],
-  "savingsTips": [
-    {"title":"Cut dining out","body":"You spent $380 on restaurants — cutting by half saves $190/month.","saving":190}
-  ]
+  "categories": [{"name":"Groceries","amount":450,"count":8}],
+  "savingsTips": [{"title":"Cut dining out","body":"You spent $380 on restaurants — half that saves $190/month.","saving":190}]
 }
-
-Rules:
-- negative amounts = spending, positive = income
-- If multiple months: normalise amounts to monthly averages
-- Categories only from: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other
-- Do NOT add an Income category
-- 4-5 savings tips with real dollar figures
-- Return ONLY raw JSON`;
+Rules: negative=spending, positive=income. Normalise to monthly if multiple months. Categories only: Groceries, Transport, Dining & Takeaway, Entertainment, Utilities, Shopping, Health, Insurance, Subscriptions, Savings & Transfers, Other. No Income category. 4-5 tips with real dollar amounts. Return ONLY raw JSON.`;
 
   const showError = (msg) => {
-    dbg('ERROR shown to user: ' + msg);
+    dbg('ERROR: ' + msg);
     document.getElementById('upload-loading').style.display = 'none';
     document.getElementById('upload-btn-wrap').style.display = '';
-    document.getElementById('m-pdf').style.display   = curMethod==='pdf'   ? '' : 'none';
+    document.getElementById('m-pdf').style.display   = curMethod==='pdf' ? '' : 'none';
     document.getElementById('m-paste').style.display = curMethod==='paste' ? '' : 'none';
     document.querySelector('.seg').style.display = 'flex';
     document.querySelector('.banner').style.display = 'flex';
-    // Show debug panel
     document.getElementById('debug-panel').style.display = '';
     toast('Failed: ' + msg);
   };
 
+  // Build messages array
+  let messages;
+  if (curMethod === 'paste') {
+    const txt = document.getElementById('paste-in').value.trim();
+    dbg('Paste mode: ' + txt.length + ' chars');
+    messages = [{ role:'user', content: 'Bank statement:\n\n' + txt.substring(0,14000) + '\n\n' + PROMPT }];
+  } else if (pageImages.length > 0) {
+    // Image-based PDF: send rendered page images
+    dbg('Image PDF mode: ' + pageImages.length + ' page images');
+    document.getElementById('load-sub').textContent = 'Reading ' + pageImages.length + ' pages visually…';
+    const content = pageImages.map(b64 => ({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: b64 }
+    }));
+    content.push({ type: 'text', text: PROMPT });
+    messages = [{ role:'user', content }];
+  } else {
+    // Text-based PDF
+    dbg('Text PDF mode: ' + pdfText.length + ' chars');
+    messages = [{ role:'user', content: 'Bank statement from PDF:\n\n' + pdfText.substring(0,14000) + '\n\n' + PROMPT }];
+  }
+
+  // Call Anthropic directly via XMLHttpRequest
+  // XHR bypasses the Safari PWA restriction that blocks fetch() for cross-origin requests
   try {
-    let messages;
+    const result = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'https://api.anthropic.com/v1/messages', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('x-api-key', k);
+      xhr.setRequestHeader('anthropic-version', '2023-06-01');
+      xhr.setRequestHeader('anthropic-dangerous-direct-browser-calls', 'true');
+      xhr.timeout = 120000; // 2 min timeout for large image PDFs
 
-    if (curMethod === 'paste') {
-      const txt = document.getElementById('paste-in').value.trim();
-      dbg('Paste mode: ' + txt.length + ' chars');
-      messages = [{ role:'user', content: 'Bank statement:\n\n' + txt + '\n\n' + PROMPT }];
-    } else {
-      // PDF mode — send extracted text (tiny payload vs raw PDF base64)
-      dbg('PDF mode: sending ' + pdfText.length + ' chars of extracted text');
-      const truncated = pdfText.substring(0, 14000); // ~14KB max
-      messages = [{ role:'user', content: 'Bank statement extracted from PDF:\n\n' + truncated + '\n\n' + PROMPT }];
-    }
+      xhr.onload = () => {
+        dbg('XHR status: ' + xhr.status);
+        if (xhr.status === 200) {
+          try {
+            const d = JSON.parse(xhr.responseText);
+            resolve(d);
+          } catch(e) {
+            reject(new Error('Bad JSON response: ' + xhr.responseText.substring(0,100)));
+          }
+        } else {
+          let msg = 'HTTP ' + xhr.status;
+          try { const e = JSON.parse(xhr.responseText); msg = e.error?.message || msg; } catch {}
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror   = () => reject(new Error('Network error — check your internet connection'));
+      xhr.ontimeout = () => reject(new Error('Timed out — try fewer pages or use Paste method'));
 
-    const scriptUrl = script();
-    if (!scriptUrl) throw new Error('Apps Script URL not set — go to Settings');
-
-    dbg('Calling proxy: ' + scriptUrl.substring(0,60) + '…');
-
-    // Send API key + messages to Apps Script, which calls Anthropic server-side (no CORS issues)
-    const proxyBody = JSON.stringify({
-      action: 'analyse',
-      apiKey: k,
-      messages: messages,
-      model: 'claude-sonnet-4-6'
+      const body = JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4096, messages });
+      dbg('XHR body size: ' + body.length + ' bytes');
+      xhr.send(body);
     });
-    dbg('Proxy body size: ' + proxyBody.length + ' bytes');
 
-    const res = await fetch(scriptUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: proxyBody
-    });
-
-    dbg('Proxy response status: ' + res.status);
-    if (!res.ok) {
-      const errTxt = await res.text().catch(() => '');
-      throw new Error('Proxy error ' + res.status + (errTxt ? ': ' + errTxt.substring(0,100) : ''));
-    }
-
-    const respText = await res.text();
-    dbg('Proxy raw response length: ' + respText.length + ' preview: ' + respText.substring(0,120));
-
-    let d;
-    try { d = JSON.parse(respText); }
-    catch(pe) { throw new Error('Could not parse proxy response: ' + respText.substring(0,200)); }
-
-    dbg('Proxy response keys: ' + Object.keys(d).join(', '));
-    if (d.error) throw new Error('Claude API error: ' + d.error);
-    if (!d.content) throw new Error('No content returned — check your Apps Script is redeployed');
-
-    const rawText = d.content.map(b => b.text||'').join('').trim();
-    dbg('Raw text length: ' + rawText.length + ' first 80: ' + rawText.substring(0,80));
-
+    const rawText = result.content.map(b => b.text||'').join('').trim();
+    dbg('Response text length: ' + rawText.length);
     const cleaned = rawText.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
     BD = JSON.parse(cleaned);
-    dbg('Parsed OK. Income=' + BD.totalIncome + ' Spend=' + BD.totalSpend + ' Transactions=' + (BD.transactions||[]).length);
+    dbg('Parsed OK — income=' + BD.totalIncome + ' spend=' + BD.totalSpend + ' tx=' + (BD.transactions||[]).length);
 
     if (!BD.totalIncome && !BD.totalSpend) throw new Error('No financial data found in statement');
-
     renderAll();
     scheduleSave();
     showTab('overview');
     toast('Statement analysed ✓');
 
   } catch(err) {
-    dbg('CAUGHT: ' + err.name + ': ' + err.message);
+    dbg('CAUGHT: ' + err.message);
     showError(err.message);
   }
 }
+
 // ═══════════════════════════════════════════════
 // Render
 // ═══════════════════════════════════════════════
